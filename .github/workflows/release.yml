@@ -89,7 +89,6 @@ jobs:
       GOOS: ${{ matrix.goos }}
       GOARCH: ${{ matrix.goarch }}
       LABEL: ${{ matrix.label }}
-      RUNNER_TEMP: ${{ runner.temp }}
     steps:
       - uses: actions/checkout@v4
 
