@@ -25,7 +25,16 @@ type Tags struct {
 }
 
 // ReadTags 按扩展名分派到对应的容器解析器。任何解析失败都返回零值，不报错。
-func ReadTags(path, ext string) Tags {
+func ReadTags(path, ext string) (tags Tags) {
+	// 解析的是用户磁盘上的任意文件：任何越界/畸形输入都只能让这一个文件读不出标签，
+	// 绝不能把扫描进程带崩（以前一个畸形 mp3 就能 panic 掉整个服务）。
+	defer func() {
+		if r := recover(); r != nil {
+			fmt.Fprintf(os.Stderr, "[mplay] 解析标签异常 %s: %v\n", path, r)
+			tags = Tags{}
+		}
+	}()
+
 	f, err := os.Open(path)
 	if err != nil {
 		return Tags{}

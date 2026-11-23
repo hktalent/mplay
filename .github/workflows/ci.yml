@@ -68,6 +68,8 @@ jobs:
           for d in a b; do
             printf 'ID3\x03\x00\x00\x00\x00\x00\x00' > /tmp/mplay-m/$d/one.mp3
           done
+          # 畸形的 mp3 帧头（verBits=1 保留值）：以前重新扫描会被它 panic 掉
+          printf '\xff\xea\x90\x00' > /tmp/mplay-m/a/broken.mp3
           printf '{"addr":"127.0.0.1:8739","mediaDirs":["/tmp/mplay-m/a","/tmp/mplay-m/b"]}' > /tmp/mplay-m/cfg/config.json
           ./bin/mplay -config /tmp/mplay-m/cfg/config.json -cache /tmp/mplay-m/cache -no-scan > /tmp/mplay-m/log 2>&1 &
           PID=$!

@@ -325,7 +325,10 @@ func mp3Header(b []byte) (int, int, int, int) {
 	srIdx := int((b[2] >> 2) & 0x03)
 	channel := (b[3] >> 6) & 0x03 // 3=单声道
 
-	if brIdx == 0 || brIdx == 15 || srIdx == 3 || layer != 1 {
+	// verBits==1 是标准里的保留值（不是 MPEG1/2/2.5），也没有采样率表项：
+	// 以前直接用它去查 srTable 会拿到 nil 切片，紧接着 sr[2] 就 index out of range
+	// 把整个进程 panic 掉（一个畸形 mp3 文件就能触发）。
+	if brIdx == 0 || brIdx == 15 || srIdx == 3 || layer != 1 || verBits == 1 {
 		return 0, 0, 0, 0
 	}
 
@@ -340,7 +343,11 @@ func mp3Header(b []byte) (int, int, int, int) {
 		0: {11025, 12000, 8000},
 	}
 	br := brTable[brIdx-1] * 1000
-	sr := srTable[int(verBits)][srIdx]
+	srs, ok := srTable[int(verBits)]
+	if !ok || srIdx >= len(srs) {
+		return 0, 0, 0, 0
+	}
+	sr := srs[srIdx]
 	samples := 1152
 	side := 32
 	if mpeg1 {

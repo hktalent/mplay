@@ -6,6 +6,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
 VERSION="${VERSION:-$(git describe --tags --always --dirty 2>/dev/null || echo 1.0.0)}"
+VERSION="${VERSION#v}" # git describe 会带 v 前缀，日志里再拼 v 就成了 vv1.0.2
 OUT="${OUT:-bin}"
 GOOS="${GOOS:-$(go env GOOS)}"
 GOARCH="${GOARCH:-$(go env GOARCH)}"

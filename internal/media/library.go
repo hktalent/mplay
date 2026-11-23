@@ -137,7 +137,7 @@ func (l *Library) RequestScan() {
 func (l *Library) scanWorker() {
 	for range l.scanQueue {
 		for {
-			err := l.Scan(context.Background())
+			err := l.runScanSafely()
 			if err == nil {
 				break
 			}
@@ -214,6 +214,19 @@ func (l *Library) SaveIndex() error {
 }
 
 // Scan 遍历所有媒体目录，重建索引。
+// runScanSafely 给后台扫描兜一层 recover：worker 是常驻 goroutine，
+// 里面任何 panic（畸形媒体文件、第三方解析器越界）都会直接带走整个进程。
+func (l *Library) runScanSafely() (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			l.scanning.Store(false)
+			fmt.Fprintf(os.Stderr, "[mplay] 扫描过程中发生异常（已跳过，服务继续运行）: %v\n", r)
+			err = fmt.Errorf("扫描异常: %v", r)
+		}
+	}()
+	return l.Scan(context.Background())
+}
+
 func (l *Library) Scan(ctx context.Context) error {
 	if ctx == nil { // 调用方传 nil 时给个空 context：下面 WalkDir 回调会调 ctx.Err()
 		ctx = context.Background()
@@ -307,7 +320,7 @@ func (l *Library) Scan(ctx context.Context) error {
 		go func() {
 			defer wg.Done()
 			for path := range jobs {
-				if e := buildEntry(path, old[path], dirFiles[filepath.Dir(path)], l.cacheDir); e != nil {
+				if e := buildEntrySafely(path, old[path], dirFiles[filepath.Dir(path)], l.cacheDir); e != nil {
 					out <- e
 				}
 			}
@@ -343,6 +356,17 @@ func (l *Library) Scan(ctx context.Context) error {
 	l.errMsg = ""
 	l.mu.Unlock()
 	return l.SaveIndex()
+}
+
+// buildEntrySafely 保证单个文件解析失败只丢这一个条目，不影响整次扫描。
+func buildEntrySafely(path string, old *Entry, siblings []string, cacheDir string) (e *Entry) {
+	defer func() {
+		if r := recover(); r != nil {
+			fmt.Fprintf(os.Stderr, "[mplay] 跳过无法解析的文件 %s: %v\n", path, r)
+			e = nil
+		}
+	}()
+	return buildEntry(path, old, siblings, cacheDir)
 }
 
 func (l *Library) setErr(msg string) {
