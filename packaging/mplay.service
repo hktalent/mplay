@@ -1,0 +1,23 @@
+[Unit]
+Description=mplay 音视频播放与歌词同步服务
+Documentation=https://m.51pwn.com
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=mplay
+Group=mplay
+EnvironmentFile=-/etc/mplay/env
+ExecStart=/usr/local/bin/mplay -addr :8737
+Restart=on-failure
+RestartSec=3
+# 媒体目录只读就够；缓存目录需要可写
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/srv/mplay/cache
+PrivateTmp=true
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,59 @@
+name: ci
+
+# 日常提交的快速体检：Go 编译/静态检查 + 前端语法 + 脚本语法。
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: go vet / build
+        run: |
+          gofmt -l . | tee /tmp/fmt.txt
+          test ! -s /tmp/fmt.txt
+          go vet ./...
+          CGO_ENABLED=0 go build -trimpath -o /tmp/mplay .
+
+      - name: frontend syntax
+        run: |
+          node --check web/app.js
+          node --check web/player.js
+          node --check web/lyrics.js
+          node --check web/footer.js
+
+      - name: shell syntax
+        run: |
+          bash -n scripts/build.sh
+          bash -n scripts/desktop.sh
+          bash -n scripts/package.sh
+          bash -n scripts/package-desktop.sh
+
+      - name: smoke test (headless)
+        run: |
+          ./scripts/build.sh
+          ./bin/mplay -addr 127.0.0.1:8737 -no-scan -cache /tmp/mplay-ci > /tmp/mplay.log 2>&1 &
+          for i in $(seq 1 30); do
+            curl -sf http://127.0.0.1:8737/api/health >/dev/null && break
+            sleep 0.5
+          done
+          curl -sf http://127.0.0.1:8737/ | grep -q "mplay"
+          curl -sf http://127.0.0.1:8737/api/version
+          curl -sfI http://127.0.0.1:8737/style.css | head -3

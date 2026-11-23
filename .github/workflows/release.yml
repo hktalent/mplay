@@ -1,0 +1,250 @@
+name: release
+
+# 打 tag（v1.2.3）→ 自动编译 macOS / Linux / Windows 桌面版与服务端包，并发布 Release。
+# 也可以在 Actions 页面手动触发（workflow_dispatch），自填版本号。
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "版本号（如 1.2.3，不带 v）。留空则用 0.1.0-dev.<短SHA>"
+        required: false
+        default: ""
+      draft:
+        description: "发布为草稿"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  # ── 1) 统一算版本号 ────────────────────────────────────────────
+  prepare:
+    name: prepare
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      tag: ${{ steps.v.outputs.tag }}
+      is_tag: ${{ steps.v.outputs.is_tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve version
+        id: v
+        shell: bash
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          if [ -n "${INPUT_VERSION:-}" ]; then
+            VERSION="$INPUT_VERSION"; IS_TAG=false
+          elif [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            VERSION="${GITHUB_REF#refs/tags/v}"; IS_TAG=true
+          else
+            VERSION="0.1.0-dev.$(git rev-parse --short HEAD)"; IS_TAG=false
+          fi
+          VERSION="${VERSION#v}"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=v$VERSION"    >> "$GITHUB_OUTPUT"
+          echo "is_tag=$IS_TAG"   >> "$GITHUB_OUTPUT"
+          echo "==> 版本: $VERSION"
+
+  # ── 2) 桌面版：mplay + urlbox 打进一个包 ────────────────────────
+  desktop:
+    name: desktop-${{ matrix.name }}
+    needs: prepare
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macos-universal
+            os: macos-14
+            label: macos-universal
+            goos: darwin
+            goarch: arm64          # 两个架构各自编译后 lipo 合成通用包
+            universal: "1"
+          - name: linux-x64
+            os: ubuntu-22.04
+            label: linux-x64
+            goos: linux
+            goarch: amd64
+          - name: windows-x64
+            os: windows-latest
+            label: windows-x64
+            goos: windows
+            goarch: amd64
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
+      GOOS: ${{ matrix.goos }}
+      GOARCH: ${{ matrix.goarch }}
+      LABEL: ${{ matrix.label }}
+      RUNNER_TEMP: ${{ runner.temp }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # 桌面壳复用同一个作者的 urlbox（Rust + wry），CI 里现场编译，避免依赖预编译产物
+      - name: Checkout urlbox
+        uses: actions/checkout@v4
+        with:
+          repository: hktalent/urlbox
+          ref: main
+          path: .urlbox
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.goos == 'darwin' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+
+      - name: Linux dependencies (webkit2gtk)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential pkg-config libssl-dev file zip \
+            libgtk-3-dev libwebkit2gtk-4.1-dev libsoup-3.0-dev \
+            libjavascriptcoregtk-4.1-dev
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: .urlbox
+          key: ${{ matrix.name }}
+
+      - name: Build urlbox
+        shell: bash
+        run: |
+          cd .urlbox
+          if [ "$GOOS" = "darwin" ]; then
+            cargo build --release --locked --target aarch64-apple-darwin
+            cargo build --release --locked --target x86_64-apple-darwin
+            lipo -create -output "$RUNNER_TEMP/urlbox" \
+              target/aarch64-apple-darwin/release/urlbox \
+              target/x86_64-apple-darwin/release/urlbox
+          else
+            cargo build --release --locked
+            cp target/release/urlbox* "$RUNNER_TEMP/"
+          fi
+          ls -lh "$RUNNER_TEMP"/urlbox*
+
+      - name: Build mplay
+        shell: bash
+        run: |
+          LDFLAGS="-s -w -X main.version=$VERSION"
+          if [ "$GOOS" = "darwin" ] && [ "${LABEL}" = "macos-universal" ]; then
+            CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -trimpath -ldflags "$LDFLAGS" -o "$RUNNER_TEMP/mplay-arm64" .
+            CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build -trimpath -ldflags "$LDFLAGS" -o "$RUNNER_TEMP/mplay-amd64" .
+            lipo -create -output "$RUNNER_TEMP/mplay" "$RUNNER_TEMP/mplay-arm64" "$RUNNER_TEMP/mplay-amd64"
+          else
+            EXE=""; [ "$GOOS" = "windows" ] && EXE=".exe"
+            CGO_ENABLED=0 GOOS="$GOOS" GOARCH="$GOARCH" go build -trimpath -ldflags "$LDFLAGS" -o "$RUNNER_TEMP/mplay$EXE" .
+          fi
+          ls -lh "$RUNNER_TEMP"/mplay*
+
+      - name: Package desktop bundle
+        shell: bash
+        run: |
+          EXE=""; [ "$GOOS" = "windows" ] && EXE=".exe"
+          MPLAY_BIN="$RUNNER_TEMP/mplay$EXE" URLBOX_BIN="$RUNNER_TEMP/urlbox$EXE" \
+            ./scripts/package-desktop.sh
+
+      - name: Collect artifacts
+        shell: bash
+        run: |
+          mkdir -p upload
+          shopt -s nullglob
+          for f in dist/mplay-desktop-*; do
+            [ -f "$f" ] && cp "$f" upload/
+          done
+          ls -lh upload/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: desktop-${{ matrix.name }}
+          path: upload/*
+          if-no-files-found: error
+          retention-days: 14
+
+  # ── 3) 服务端（纯 Go 交叉编译，覆盖 linux-arm64） ───────────────
+  server:
+    name: server
+    needs: prepare
+    runs-on: ubuntu-22.04
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Package server binaries
+        run: ./scripts/package.sh
+
+      - name: Collect artifacts
+        shell: bash
+        run: |
+          mkdir -p upload
+          shopt -s nullglob
+          for f in dist/mplay-[0-9]*; do
+            [ -f "$f" ] && cp "$f" upload/
+          done
+          ls -lh upload/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: server
+          path: upload/*
+          if-no-files-found: error
+          retention-days: 14
+
+  # ── 4) 汇总发布 ────────────────────────────────────────────────
+  publish:
+    name: publish
+    needs: [prepare, desktop, server]
+    if: needs.prepare.outputs.is_tag == 'true' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Checksums
+        shell: bash
+        run: |
+          cd dist
+          ls -1 | grep -v '^SHA256SUMS$' > /tmp/files.txt || true
+          sha256sum $(cat /tmp/files.txt) > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Publish release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.prepare.outputs.tag }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+          DRAFT: ${{ (github.event_name == 'workflow_dispatch' && inputs.draft) && '--draft' || '' }}
+        run: |
+          gh release create "$TAG" dist/* \
+            --title "mplay $VERSION" \
+            --notes-file docs/RELEASE_NOTES.md $DRAFT

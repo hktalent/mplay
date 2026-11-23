@@ -1,0 +1,9 @@
+# mplay 构建产物
+/bin/
+/dist/
+/tmp/
+*.exe
+*.dmg
+*.zip
+*.tar.gz
+.DS_Store
