@@ -1090,7 +1090,8 @@
       rm.className = 'rm';
       rm.type = 'button';
       rm.textContent = '移除';
-      rm.addEventListener('click', function () { saveDirs(dirs.filter(function (x) { return x !== d; })); });
+      rm.disabled = dirsSaving; // 保存中重绘出来的新按钮也要保持禁用
+      rm.addEventListener('click', function () { removeDir(d); });
       li.appendChild(span);
       li.appendChild(rm);
       list.appendChild(li);
@@ -1109,9 +1110,42 @@
     }
   }
 
+  // 连续点「移除」时，闭包里那份 dirs 是上一次渲染的快照：
+  // 两次请求都基于同一份旧数组，后到的会把先前的删除覆盖回去。所以这里
+  // 每次都从最新配置重算，并且在保存期间锁住按钮，避免并发 POST。
+  let dirsSaving = false;
+
+  function setDirButtonsDisabled(v) {
+    const list = $('dir-list');
+    if (!list) return;
+    Array.prototype.forEach.call(list.querySelectorAll('button.rm'), function (b) { b.disabled = v; });
+  }
+
+  function removeDir(d) {
+    if (dirsSaving) return;
+    const cur = ((S.config && S.config.mediaDirs) || []).slice();
+    const i = cur.indexOf(d);
+    if (i < 0) return;
+    cur.splice(i, 1);
+    saveDirs(cur);
+  }
+
   function saveDirs(dirs) {
+    if (dirsSaving) return;
+    dirsSaving = true;
+    setDirButtonsDisabled(true);
     patchConfig({ mediaDirs: dirs }, function (err) {
-      if (err) return;
+      if (err) {
+        dirsSaving = false;
+        setDirButtonsDisabled(false);
+        return;
+      }
+      // 成功后多锁 300ms：列表重排后按钮位置会变，手快的人第二下很容易
+      // 点到「下一行」把另一个目录也删了。这段时间内忽略后续点击。
+      setTimeout(function () {
+        dirsSaving = false;
+        setDirButtonsDisabled(false);
+      }, 300);
       toast('已更新媒体目录，正在后台扫描');
       setTimeout(function () { loadLibrary().catch(function () {}); }, 800);
     });

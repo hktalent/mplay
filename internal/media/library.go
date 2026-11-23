@@ -5,6 +5,7 @@ import (
 	"crypto/sha1"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -94,7 +95,14 @@ type Library struct {
 	scanning atomic.Bool
 	errMsg   string
 	scanMu   sync.Mutex
+
+	// scanQueue 是「待扫描」信号（容量 1）：连续多次改媒体目录时只排一次，
+	// 但保证最后一次改动一定会被扫到，不会被「扫描进行中」直接丢掉。
+	scanQueue chan struct{}
 }
+
+// ErrScanBusy 表示已有扫描在跑。
+var ErrScanBusy = errors.New("扫描正在进行中")
 
 type libraryCache struct {
 	Version   int      `json:"version"`
@@ -105,14 +113,43 @@ type libraryCache struct {
 // NewLibrary 创建索引。dirs 是动态取媒体目录的函数（配置热改后自动生效）。
 func NewLibrary(cacheDir string, dirs func() []string) *Library {
 	l := &Library{
-		dirs:     dirs,
-		cacheDir: cacheDir,
-		entries:  map[string]*Entry{},
-		byPath:   map[string]*Entry{},
-		dirFiles: map[string][]string{},
+		dirs:      dirs,
+		cacheDir:  cacheDir,
+		entries:   map[string]*Entry{},
+		byPath:    map[string]*Entry{},
+		dirFiles:  map[string][]string{},
+		scanQueue: make(chan struct{}, 1),
 	}
 	l.loadCache()
+	go l.scanWorker()
 	return l
+}
+
+// RequestScan 请求一次后台扫描：不阻塞调用方；如果已有扫描在跑，
+// 会把请求排队并在当前扫描结束后立刻补扫一次。
+func (l *Library) RequestScan() {
+	select {
+	case l.scanQueue <- struct{}{}:
+	default: // 队列里已经有待扫请求，合并
+	}
+}
+
+func (l *Library) scanWorker() {
+	for range l.scanQueue {
+		for {
+			err := l.Scan(context.Background())
+			if err == nil {
+				break
+			}
+			if errors.Is(err, ErrScanBusy) {
+				// 别的扫描（例如启动扫描）还在跑，稍等再补扫，不能直接丢弃。
+				time.Sleep(300 * time.Millisecond)
+				continue
+			}
+			fmt.Fprintf(os.Stderr, "[mplay] 后台扫描失败: %v\n", err)
+			break
+		}
+	}
 }
 
 func (l *Library) indexPath() string { return filepath.Join(l.cacheDir, "library.json") }
@@ -158,17 +195,31 @@ func (l *Library) SaveIndex() error {
 	if err := os.MkdirAll(l.cacheDir, 0o755); err != nil {
 		return err
 	}
-	tmp := l.indexPath() + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o644); err != nil {
+	// 用唯一临时文件再 rename：固定 .tmp 名字在两份索引同时落盘时会互相踩，
+	// 后者 rename 时源文件已被前者挪走 → no such file or directory。
+	tmp, err := os.CreateTemp(l.cacheDir, ".library-*.tmp")
+	if err != nil {
 		return err
 	}
-	return os.Rename(tmp, l.indexPath())
+	tmpName := tmp.Name()
+	defer os.Remove(tmpName)
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmpName, l.indexPath())
 }
 
 // Scan 遍历所有媒体目录，重建索引。
 func (l *Library) Scan(ctx context.Context) error {
+	if ctx == nil { // 调用方传 nil 时给个空 context：下面 WalkDir 回调会调 ctx.Err()
+		ctx = context.Background()
+	}
 	if !l.scanning.CompareAndSwap(false, true) {
-		return fmt.Errorf("扫描正在进行中")
+		return ErrScanBusy
 	}
 	defer l.scanning.Store(false)
 	l.scanMu.Lock()

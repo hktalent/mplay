@@ -32,6 +32,9 @@ jobs:
           go vet ./...
           CGO_ENABLED=0 go build -trimpath -o /tmp/mplay .
 
+      - name: unit tests (race)
+        run: go test -race ./...
+
       - name: frontend syntax
         run: |
           node --check web/app.js
@@ -57,3 +60,32 @@ jobs:
           curl -sf http://127.0.0.1:8737/ | grep -q "mplay"
           curl -sf http://127.0.0.1:8737/api/version
           curl -sfI http://127.0.0.1:8737/style.css | head -3
+
+      # 回归：连续多次移除媒体目录曾经直接把服务 panic 掉（Scan(nil)）
+      - name: regression - 连续移除媒体目录
+        run: |
+          mkdir -p /tmp/mplay-m/a /tmp/mplay-m/b /tmp/mplay-m/cfg
+          for d in a b; do
+            printf 'ID3\x03\x00\x00\x00\x00\x00\x00' > /tmp/mplay-m/$d/one.mp3
+          done
+          printf '{"addr":"127.0.0.1:8739","mediaDirs":["/tmp/mplay-m/a","/tmp/mplay-m/b"]}' > /tmp/mplay-m/cfg/config.json
+          ./bin/mplay -config /tmp/mplay-m/cfg/config.json -cache /tmp/mplay-m/cache -no-scan > /tmp/mplay-m/log 2>&1 &
+          PID=$!
+          for i in $(seq 1 30); do curl -sf http://127.0.0.1:8739/api/health >/dev/null && break; sleep 0.5; done
+
+          remove() { # $1=剩余目录的 JSON 数组
+            code=$(curl -s -o /dev/null -w '%{http_code}' -X POST \
+              -H 'Content-Type: application/json' -d "{\"mediaDirs\":$1}" \
+              http://127.0.0.1:8739/api/config)
+            test "$code" = "200" || { echo "移除目录返回 $code"; cat /tmp/mplay-m/log; exit 1; }
+            kill -0 $PID || { echo "服务在移除目录时崩溃"; cat /tmp/mplay-m/log; exit 1; }
+            sleep 0.5
+          }
+          remove '["/tmp/mplay-m/b"]'
+          remove '[]'
+          remove '[]'
+
+          kill -0 $PID
+          curl -s http://127.0.0.1:8739/api/stats | grep -q '"roots":0'
+          ! grep -qi panic /tmp/mplay-m/log
+          kill $PID

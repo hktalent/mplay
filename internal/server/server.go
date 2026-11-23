@@ -37,6 +37,9 @@ type Server struct {
 	mux   *http.ServeMux
 	start time.Time
 
+	// cfgMu 串行化配置写入：配置对象在内存里共享，并发 POST 会互相覆盖。
+	cfgMu sync.Mutex
+
 	// 歌词全文索引（内存）与构建状态
 	snippets   *lyrics.SnippetIndex
 	idxMu      sync.Mutex

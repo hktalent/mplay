@@ -83,6 +83,11 @@ type configPatch struct {
 }
 
 func (s *Server) handlePostConfig(w http.ResponseWriter, r *http.Request) {
+	// 配置是内存里的共享对象：并发 POST（前端连点两次「移除」）会互相覆盖并
+	// 同时写同一个临时文件，导致 os.Rename 失败报「配置文件写入失败」。
+	s.cfgMu.Lock()
+	defer s.cfgMu.Unlock()
+
 	var p configPatch
 	if err := decodeBody(r, &p); err != nil {
 		errJSON(w, http.StatusBadRequest, err, "请求体必须是 JSON")
@@ -148,9 +153,9 @@ func (s *Server) handlePostConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if dirsChanged {
-		go func() {
-			_ = s.o.Lib.Scan(nil)
-		}()
+		// 必须走 RequestScan：连续移除多个目录时，前一次扫描可能还没结束，
+		// 直接 Scan 会返回「扫描正在进行中」并把这次改动丢掉（曲库残留旧条目）。
+		s.o.Lib.RequestScan()
 	}
 	writeJSON(w, http.StatusOK, s.publicConfig())
 }
@@ -212,18 +217,9 @@ func (s *Server) handleLibrary(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleScan(w http.ResponseWriter, r *http.Request) {
-	if s.o.Lib.Scanning() {
-		writeJSON(w, http.StatusAccepted, map[string]any{"ok": true, "scanning": true})
-		return
-	}
-	// 注意：这里必须用 Background，请求返回后 r.Context() 会被取消，
-	// 扫描会跑到一半被中断（踩过这个坑）。
-	go func() {
-		if err := s.o.Lib.Scan(context.Background()); err != nil {
-			debugf("扫描失败: %v", err)
-		}
-	}()
-	writeJSON(w, http.StatusAccepted, map[string]any{"ok": true, "scanning": true})
+	// 同样用 RequestScan：正在扫描时这次点击会被排队补扫，而不是直接忽略。
+	s.o.Lib.RequestScan()
+	writeJSON(w, http.StatusAccepted, map[string]any{"ok": true, "scanning": s.o.Lib.Scanning()})
 }
 
 func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {

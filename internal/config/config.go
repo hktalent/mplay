@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 )
 
 // Source 是一个「自定义音源」的描述。它只约定一件事：给一个搜索地址的模板，
@@ -53,6 +54,9 @@ type Config struct {
 	AuthToken string `json:"authToken,omitempty"`
 
 	path string
+
+	// mu 保护字段读写：/api/config 允许并发请求，配置对象是共享的。
+	mu sync.Mutex
 }
 
 // Path 返回配置文件路径。
@@ -138,19 +142,35 @@ func Load(path string) (*Config, error) {
 
 // Save 原子写入配置文件（先写临时文件再 rename），避免半截文件。
 func (c *Config) Save() error {
+	// 锁住整个「清洗 + 序列化 + 落盘」过程：并发保存时既不会互相踩临时文件，
+	// 也不会把一半新一半旧的字段写进去。
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
 	if c.path == "" {
 		c.path = filepath.Join(ConfigDir(), "config.json")
 	}
 	if err := os.MkdirAll(filepath.Dir(c.path), 0o755); err != nil {
 		return err
 	}
-	c.Normalize()
+	c.normalizeLocked()
 	data, err := json.MarshalIndent(c, "", "  ")
 	if err != nil {
 		return err
 	}
-	tmp := c.path + ".tmp"
-	if err := os.WriteFile(tmp, append(data, '\n'), 0o600); err != nil {
+	// 唯一临时文件（不是固定 .tmp）：两次保存并发时固定名字会互相覆盖，
+	// 后一次 rename 会遇到 ENOENT 而报「配置文件写入失败」。
+	f, err := os.CreateTemp(filepath.Dir(c.path), ".config-*.json")
+	if err != nil {
+		return err
+	}
+	tmp := f.Name()
+	defer os.Remove(tmp)
+	if _, err := f.Write(append(data, '\n')); err != nil {
+		f.Close()
+		return err
+	}
+	if err := f.Close(); err != nil {
 		return err
 	}
 	return os.Rename(tmp, c.path)
@@ -158,6 +178,12 @@ func (c *Config) Save() error {
 
 // Normalize 清洗用户填的目录：展开 ~、转绝对路径、去重。
 func (c *Config) Normalize() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.normalizeLocked()
+}
+
+func (c *Config) normalizeLocked() {
 	if c.Addr == "" {
 		c.Addr = "127.0.0.1:8737"
 	}
