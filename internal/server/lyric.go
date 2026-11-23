@@ -57,8 +57,11 @@ func (s *Server) resolveLyric(ctx context.Context, e media.Entry, force bool, pi
 		}
 	}
 
-	doc, remoteErr := s.o.Lyr.Resolve(ctx, e.ID, e.Title, e.Artist, e.Album, e.Duration, force, pick)
+	doc, matched, remoteErr := s.o.Lyr.ResolveBest(ctx, e.ID, variantsFor(e), e.Album, e.Duration, force, pick)
 	if remoteErr == nil {
+		if matched != nil {
+			s.applyMatch(e, matched)
+		}
 		if s.o.Cfg.WriteSidecar && doc.Synced {
 			s.writeSidecar(e, doc)
 		}
@@ -85,6 +88,59 @@ func (s *Server) resolveLyric(ctx context.Context, e media.Entry, force bool, pi
 		return doc, nil
 	}
 	return nil, remoteErr
+}
+
+// variantsFor 把「标签 + 文件名的各种拆法」整理成歌词库可校验的候选写法。
+// 有内嵌标签时标签排第一（最可信）；只有文件名时按 GuessNames 给的顺序逐个试。
+func variantsFor(e media.Entry) []lyrics.Variant {
+	var out []lyrics.Variant
+	hasRealTags := e.MetaSource != "" && !strings.Contains(e.MetaSource, "filename") && e.MetaSource != "ai"
+	if hasRealTags && (e.Title != "" || e.Artist != "") {
+		out = append(out, lyrics.Variant{Title: e.Title, Artist: e.Artist, Source: "tag", Library: true})
+	}
+	for _, g := range media.GuessNames(e.Name) {
+		out = append(out, lyrics.Variant{Title: g.Title, Artist: g.Artist, Source: g.Source})
+	}
+	// 曲库里可能已经被人工/AI 修正过（MetaSource=ai），那条也要保留
+	if e.MetaSource == "ai" && e.Title != "" {
+		out = append([]lyrics.Variant{{Title: e.Title, Artist: e.Artist, Source: "library", Library: true}}, out...)
+	}
+	// 去重，最多 6 条（BestMatch 内部也只用到 6 条）
+	seen := map[string]bool{}
+	var uniq []lyrics.Variant
+	for _, v := range out {
+		k := media.NormalizeKey(v.Title) + "\x00" + media.NormalizeKey(v.Artist)
+		if v.Title == "" || seen[k] {
+			continue
+		}
+		seen[k] = true
+		uniq = append(uniq, v)
+	}
+	if len(uniq) > 6 {
+		uniq = uniq[:6]
+	}
+	return uniq
+}
+
+// applyMatch 把歌词库确认过的歌名/艺人回填到曲库（只改索引，不动用户文件）。
+// 只在原来信息是从文件名猜出来的时候回填——真实标签是用户的数据，不覆盖。
+func (s *Server) applyMatch(e media.Entry, m *lyrics.Match) {
+	if m == nil || strings.TrimSpace(m.Record.TrackName) == "" {
+		return
+	}
+	fromFilename := strings.Contains(e.MetaSource, "filename") || e.MetaSource == "ai" || e.MetaSource == ""
+	if !fromFilename {
+		return
+	}
+	title := strings.TrimSpace(m.Record.TrackName)
+	artist := strings.TrimSpace(m.Record.ArtistName)
+	album := strings.TrimSpace(m.Record.AlbumName)
+	if title == "" || (e.Title == title && e.Artist == artist) {
+		return
+	}
+	if s.o.Lib.UpdateMetaFrom(e.ID, title, artist, album, "lrclib") {
+		debugf("歌词库回填: %s -> %s - %s", e.Name, title, artist)
+	}
 }
 
 // sidecarDoc 选一份最合适的同名歌词/字幕，并把另一语言版本合并成译文。

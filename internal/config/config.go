@@ -50,6 +50,10 @@ type Config struct {
 	Language string   `json:"language"`
 	Sources  []Source `json:"sources"`
 
+	// AutoCacheLyrics：曲库里的歌在后台自动缓存歌词（扫描完成后异步跑，
+	// 不占播放请求；没配歌词库或关掉时什么都不做）。
+	AutoCacheLyrics bool `json:"autoCacheLyrics"`
+
 	// AI 元数据识别（可选）：任何 OpenAI 兼容的 /chat/completions 端点都能接。
 	// 不填 key/端点时整条链路不参与，识别会退回本地规则 + 歌词库校验。
 	AIIdentify    bool   `json:"aiIdentify,omitempty"`
@@ -82,6 +86,7 @@ func Default() *Config {
 		LRCLIBBase:         "https://lrclib.net",
 		Language:           "zh-CN",
 		Sources:            []Source{},
+		AutoCacheLyrics:    true,
 	}
 	cfg.path = filepath.Join(ConfigDir(), "config.json")
 	return cfg

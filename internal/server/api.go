@@ -53,6 +53,7 @@ func (s *Server) publicConfig() map[string]any {
 		"jamendoConfigured":   cfg.JamendoClientID != "",
 		"subtitlesConfigured": cfg.OSAPIKey != "",
 		"language":            cfg.Language,
+		"autoCacheLyrics":     cfg.AutoCacheLyrics,
 		"aiIdentify":          cfg.AIIdentify,
 		"aiBaseUrl":           cfg.AIBaseURL,
 		"aiModel":             cfg.AIModel,
@@ -83,6 +84,7 @@ type configPatch struct {
 	OpenSubtitlesUser   *string          `json:"opensubtitlesUsername"`
 	OpenSubtitlesPass   *string          `json:"opensubtitlesPassword"`
 	Language            *string          `json:"language"`
+	AutoCacheLyrics     *bool            `json:"autoCacheLyrics"`
 	AIIdentify          *bool            `json:"aiIdentify"`
 	AIBaseURL           *string          `json:"aiBaseUrl"`
 	AIAPIKey            *string          `json:"aiApiKey"`
@@ -153,6 +155,12 @@ func (s *Server) handlePostConfig(w http.ResponseWriter, r *http.Request) {
 	}
 	if p.Sources != nil {
 		cfg.Sources = *p.Sources
+	}
+	if p.AutoCacheLyrics != nil {
+		cfg.AutoCacheLyrics = *p.AutoCacheLyrics
+		if *p.AutoCacheLyrics {
+			s.KickPrecache()
+		}
 	}
 	if p.AuthToken != nil {
 		cfg.AuthToken = strings.TrimSpace(*p.AuthToken)

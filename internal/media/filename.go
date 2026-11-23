@@ -20,59 +20,13 @@ var (
 )
 
 // ParseFilename 在没有可靠标签时从文件名猜标题/艺人。
-//
-// 约定：常见命名是 "艺人 - 歌名"（含 01. 前缀、各种 [320k] 噪音）。
-// 当左右两段长度悬殊或左边明显是歌名（带书名号/20 字以上）时，按 "歌名 - 艺人" 理解。
+// 完整的多候选拆法在 GuessNames 里，这里只取排序第一的作为展示用结果；
+// 真正的取舍交给歌词库校验（见 lyrics.BestMatch）。
 func ParseFilename(name string) (title, artist string) {
-	base := strings.TrimSuffix(filepath.Base(name), filepath.Ext(name))
-	base = strings.ReplaceAll(base, "_", " ")
-	for _, re := range junkPatterns {
-		base = re.ReplaceAllString(base, " ")
+	if gs := GuessNames(name); len(gs) > 0 {
+		return gs[0].Title, gs[0].Artist
 	}
-	base = trackNoPattern.ReplaceAllString(base, "")
-	base = spacesPattern.ReplaceAllString(base, " ")
-	base = strings.TrimSpace(base)
-	if base == "" {
-		return name, ""
-	}
-
-	// 《歌名》 or 《歌名》-艺人
-	if i := strings.Index(base, "《"); i >= 0 {
-		if j := strings.Index(base[i:], "》"); j > 0 {
-			return strings.TrimSpace(base[i+len("《") : i+j]), ""
-		}
-	}
-
-	parts := strings.Split(base, " - ")
-	if len(parts) >= 2 {
-		left := strings.TrimSpace(parts[0])
-		right := strings.TrimSpace(strings.Join(parts[1:], " - "))
-		if left == "" {
-			return right, ""
-		}
-		if right == "" {
-			return left, ""
-		}
-		// 左边更像歌名：带书名号、明显更长、或者在 feat 里
-		if strings.Contains(left, "《") || len([]rune(left)) > 24 || featPattern.MatchString(left) {
-			return left, strings.TrimSpace(featPattern.Split(right, 2)[0])
-		}
-		return right, left
-	}
-
-	// "歌名 by 艺人" / "歌名(艺人)"
-	if i := strings.LastIndex(strings.ToLower(base), " by "); i > 0 {
-		return strings.TrimSpace(base[:i]), strings.TrimSpace(base[i+4:])
-	}
-	if strings.HasSuffix(base, ")") {
-		if l := strings.LastIndex(base, "("); l > 0 {
-			inner := strings.TrimSpace(base[l+1 : len(base)-1])
-			if isArtistLike(inner) {
-				return strings.TrimSpace(base[:l]), inner
-			}
-		}
-	}
-	return base, ""
+	return strings.TrimSpace(filepath.Base(name)), ""
 }
 
 func isArtistLike(s string) bool {

@@ -96,6 +96,9 @@ type Library struct {
 	errMsg   string
 	scanMu   sync.Mutex
 
+	// OnScanned 在每次扫描结束后被调用（server 用它启动后台歌词缓存）。
+	OnScanned func()
+
 	// scanQueue 是「待扫描」信号（容量 1）：连续多次改媒体目录时只排一次，
 	// 但保证最后一次改动一定会被扫到，不会被「扫描进行中」直接丢掉。
 	scanQueue chan struct{}
@@ -216,6 +219,26 @@ func (l *Library) SaveIndex() error {
 // Scan 遍历所有媒体目录，重建索引。
 // runScanSafely 给后台扫描兜一层 recover：worker 是常驻 goroutine，
 // 里面任何 panic（畸形媒体文件、第三方解析器越界）都会直接带走整个进程。
+// UpdateLyricInfo 在后台补到歌词后更新条目的歌词标记（只动索引，不重扫文件）。
+func (l *Library) UpdateLyricInfo(id, source string, synced bool, cues int) bool {
+	l.mu.Lock()
+	e, ok := l.entries[id]
+	if ok {
+		if e.LyricSource == "" || source == "manual" {
+			e.LyricSource = source
+		}
+		if cues > 0 {
+			e.CueCount = cues
+		}
+		e.Synced = synced
+	}
+	l.mu.Unlock()
+	if ok {
+		_ = l.SaveIndex()
+	}
+	return ok
+}
+
 func (l *Library) runScanSafely() (err error) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -355,7 +378,12 @@ func (l *Library) Scan(ctx context.Context) error {
 	l.scanned = time.Now()
 	l.errMsg = ""
 	l.mu.Unlock()
-	return l.SaveIndex()
+	err := l.SaveIndex()
+	// 扫描结束通知上层（server 据此启动后台歌词缓存）；放在锁外，避免回调里再读库时死锁。
+	if hook := l.OnScanned; hook != nil {
+		hook()
+	}
+	return err
 }
 
 // buildEntrySafely 保证单个文件解析失败只丢这一个条目，不影响整次扫描。
@@ -589,6 +617,11 @@ func (l *Library) Get(id string) (Entry, bool) {
 // UpdateMeta 用识别结果更新条目元信息（只改内存索引与缓存，不动用户文件）。
 // 返回是否命中条目。
 func (l *Library) UpdateMeta(id, title, artist, album string) bool {
+	return l.UpdateMetaFrom(id, title, artist, album, "ai")
+}
+
+// UpdateMetaFrom 同 UpdateMeta，但记下这次元信息是谁给的（ai / lrclib / manual）。
+func (l *Library) UpdateMetaFrom(id, title, artist, album, source string) bool {
 	title = strings.TrimSpace(title)
 	artist = strings.TrimSpace(artist)
 	album = strings.TrimSpace(album)
@@ -607,7 +640,7 @@ func (l *Library) UpdateMeta(id, title, artist, album string) bool {
 		if album != "" {
 			e.Album = album
 		}
-		e.MetaSource = "ai"
+		e.MetaSource = source
 	}
 	l.mu.Unlock()
 	if ok {

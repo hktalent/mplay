@@ -85,26 +85,57 @@ func (c *Client) get(ctx context.Context, path string, q url.Values, out any) er
 	}
 	req.Header.Set("User-Agent", "mplay/1.0 (https://m.51pwn.com)")
 	req.Header.Set("Accept", "application/json")
-	resp, err := c.HTTP.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode == http.StatusNotFound {
-		return ErrNotFound
-	}
-	if resp.StatusCode != http.StatusOK {
+	for attempt := 0; ; attempt++ {
+		throttleBetween(c, attempt)
+		resp, err := c.HTTP.Do(req)
+		if err != nil {
+			return err
+		}
+		if resp.StatusCode == http.StatusOK {
+			defer resp.Body.Close()
+			return json.NewDecoder(io.LimitReader(resp.Body, 8<<20)).Decode(out)
+		}
+		// LRCLIB 会按 IP 限流（429 / 503）。退避一次再试，别把整批缓存的节奏带崩。
+		if (resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode == http.StatusServiceUnavailable) && attempt < 3 {
+			wait := 1500 * time.Millisecond * time.Duration(attempt+1)
+			if ra := resp.Header.Get("Retry-After"); ra != "" {
+				if sec, err := strconv.Atoi(strings.TrimSpace(ra)); err == nil && sec > 0 && sec <= 10 {
+					wait = time.Duration(sec) * time.Second
+				}
+			}
+			io.Copy(io.Discard, io.LimitReader(resp.Body, 512))
+			resp.Body.Close()
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(wait):
+			}
+			continue
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode == http.StatusNotFound {
+			return ErrNotFound
+		}
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
 		return fmt.Errorf("lrclib %s: %s %s", path, resp.Status, strings.TrimSpace(string(body)))
 	}
-	return json.NewDecoder(io.LimitReader(resp.Body, 8<<20)).Decode(out)
+}
+
+// throttleBetween 在重试时多等一会儿（第一次就只用基础节流）。
+func throttleBetween(c *Client, attempt int) {
+	if attempt > 0 {
+		return // 重试路径已经单独 sleep
+	}
+	c.throttle()
 }
 
 func (c *Client) throttle() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if d := time.Since(c.last); d < 250*time.Millisecond {
-		time.Sleep(250*time.Millisecond - d)
+	// LRCLIB 对匿名请求差不多是 1 次/秒的量级，这里留 600ms 间隔；
+	// 撞上 429 时由上面 get() 的退避重试兜住。
+	if d := time.Since(c.last); d < 600*time.Millisecond {
+		time.Sleep(600*time.Millisecond - d)
 	}
 	c.last = time.Now()
 }

@@ -44,6 +44,12 @@ type Server struct {
 	snippets   *lyrics.SnippetIndex
 	idxMu      sync.Mutex
 	idxBuiltAt int64
+
+	// 后台自动缓存歌词：进度快照 + 唤醒/退出通道
+	preMu   sync.Mutex
+	pre     PrecacheStats
+	preKick chan struct{}
+	preStop chan struct{}
 }
 
 // New 注册所有路由。
@@ -53,6 +59,8 @@ func New(o Options) *Server {
 		mux:      http.NewServeMux(),
 		start:    time.Now(),
 		snippets: lyrics.NewSnippetIndex(),
+		preKick:  make(chan struct{}, 1),
+		preStop:  make(chan struct{}),
 	}
 
 	s.mux.HandleFunc("GET /api/health", s.handleHealth)
@@ -77,7 +85,15 @@ func New(o Options) *Server {
 	s.mux.HandleFunc("GET /api/sources", s.handleSources)
 	s.mux.HandleFunc("POST /api/open", s.handleOpen)
 	s.mux.HandleFunc("GET /api/stats", s.handleStats)
+	s.mux.HandleFunc("GET /api/cache/status", s.handleCacheStatus)
+	s.mux.HandleFunc("POST /api/cache/run", s.handleCacheRun)
 	s.mux.HandleFunc("/", s.handleStatic)
+
+	go s.precacheWorker()
+	if o.Lib != nil {
+		o.Lib.OnScanned = s.KickPrecache // 每次扫描完成后自动补歌词
+	}
+	s.KickPrecache() // 启动后先排一轮：已经扫描完毕的曲库可以立刻开始补歌词
 
 	return s
 }

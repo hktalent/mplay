@@ -63,6 +63,7 @@
         <button class="chip" data-filter="nolyric" type="button">待配歌词</button>
       </div>
       <div class="toolbar-right">
+        <span class="tag cache-tag" id="cache-chip" hidden></span>
         <label class="sr-only" for="lib-sort">排序</label>
         <select id="lib-sort" class="select">
           <option value="title">按标题</option>
@@ -246,6 +247,22 @@
           <label for="in-os-key">OpenSubtitles API Key（可选）</label>
           <input id="in-os-key" type="text" placeholder="视频没有同名字幕时用它检索" spellcheck="false">
         </div>
+      </section>
+
+      <section class="card">
+        <header class="card-head">
+          <h2>歌词自动缓存</h2>
+          <span class="tag" id="tag-cache"></span>
+        </header>
+        <p class="card-desc">曲库扫描完成后，后台会逐首去歌词库（LRCLIB）匹配并缓存歌词，顺便把「文件名猜错」的歌名/歌手纠正成歌词库里的标准写法。整个过程不占播放请求，进度显示在曲库工具条上。</p>
+        <div class="switch-row">
+          <div><b>扫描后自动缓存</b><p class="tiny">只处理还没有歌词的音频；已有同名 .lrc 或内嵌歌词的不动。关掉后不再自动跑。</p></div>
+          <label class="switch"><input type="checkbox" id="sw-autocache"><i></i></label>
+        </div>
+        <div class="row end">
+          <button class="btn ghost" id="btn-cache-now" type="button">立即缓存缺歌词的曲目</button>
+        </div>
+        <p class="tiny" id="cache-hint"></p>
       </section>
 
       <section class="card">

@@ -197,6 +197,38 @@
   });
 
   /* ── 曲库 ─────────────────────────────────────────── */
+  // 后台歌词缓存的进度角标：库页每 3 秒问一次，跑完闪一下结果就隐藏。
+  let cacheDoneAt = 0;
+  function refreshCacheChip(force) {
+    if (S.view !== 'library' && !force) return;
+    api('/api/cache/status').then(function (d) {
+      const chip = $('cache-chip');
+      const p = d.progress || {};
+      const hint = $('cache-hint');
+      if (hint) {
+        hint.textContent = d.enabled
+          ? ('待缓存 ' + d.pending + ' 首，已缓存 ' + (d.withLyric || 0) + '/' + (d.audio || 0) + (d.lrclib ? '' : '（歌词库未启用）'))
+          : '自动缓存已关闭';
+      }
+      if (!chip) return;
+      if (p.running) {
+        chip.hidden = false;
+        chip.textContent = '缓存歌词 ' + p.done + '/' + p.total + (p.miss ? '（' + p.miss + ' 首没找到）' : '');
+        return;
+      }
+      if (p.finishedAt && p.total && Math.abs(p.finishedAt - cacheDoneAt) > 0) {
+        cacheDoneAt = p.finishedAt;
+        chip.hidden = false;
+        chip.textContent = '已缓存 ' + p.hit + '/' + p.total + ' 首歌词';
+        setTimeout(function () { chip.hidden = true; }, 4000);
+        loadLibrary().catch(function () {});
+        return;
+      }
+      chip.hidden = true;
+    }).catch(function () {});
+  }
+  setInterval(function () { refreshCacheChip(false); }, 3000);
+
   async function loadLibrary() {
     const params = new URLSearchParams();
     if (S.q) params.set('q', S.q);
@@ -1045,6 +1077,8 @@
     if ($('in-token') && !$('in-token').dataset.touched) {
       $('in-token').placeholder = c.authRequired ? '已设置，留空保持不变' : '留空表示不校验';
     }
+    set('sw-autocache', c.autoCacheLyrics !== false);
+    if ($('tag-cache')) $('tag-cache').textContent = c.autoCacheLyrics === false ? '已关闭' : '自动';
     set('sw-ai', c.aiIdentify);
     set('sw-ai-audio', c.aiUploadAudio);
     if ($('tag-ai')) {
@@ -1490,6 +1524,29 @@
         $('in-os-key').dataset.touched = '';
         toast('音源配置已保存');
       });
+    });
+
+    $('sw-autocache').addEventListener('change', function () {
+      const on = this.checked;
+      patchConfig({ autoCacheLyrics: on }, function (err) {
+        if (err) return;
+        if ($('tag-cache')) $('tag-cache').textContent = on ? '自动' : '已关闭';
+        toast(on ? '已开启：扫描后自动缓存歌词' : '已关闭自动缓存');
+        if (on) refreshCacheChip();
+      });
+    });
+
+    $('btn-cache-now').addEventListener('click', function () {
+      const btn = this;
+      btn.disabled = true;
+      api('/api/cache/run', { method: 'POST' }).then(function (d) {
+        if (!d.ok) { toast(d.error || d.hint || '没跑起来', true); return; }
+        if (d.already) { toast('已经在后台缓存了（还剩 ' + (d.pending || 0) + ' 首）'); return; }
+        if (!d.pending) { toast(d.hint || '没有需要缓存的曲目'); return; }
+        toast('已开始后台缓存 ' + d.pending + ' 首');
+        refreshCacheChip(true);
+      }).catch(function (e) { toast(e.message, true); })
+        .then(function () { btn.disabled = false; });
     });
 
     $('btn-save-ai').addEventListener('click', function () {
