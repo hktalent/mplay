@@ -586,6 +586,36 @@ func (l *Library) Get(id string) (Entry, bool) {
 	return cp, true
 }
 
+// UpdateMeta 用识别结果更新条目元信息（只改内存索引与缓存，不动用户文件）。
+// 返回是否命中条目。
+func (l *Library) UpdateMeta(id, title, artist, album string) bool {
+	title = strings.TrimSpace(title)
+	artist = strings.TrimSpace(artist)
+	album = strings.TrimSpace(album)
+	if title == "" && artist == "" {
+		return false
+	}
+	l.mu.Lock()
+	e, ok := l.entries[id]
+	if ok {
+		if title != "" {
+			e.Title = title
+		}
+		if artist != "" {
+			e.Artist = artist
+		}
+		if album != "" {
+			e.Album = album
+		}
+		e.MetaSource = "ai"
+	}
+	l.mu.Unlock()
+	if ok {
+		_ = l.SaveIndex()
+	}
+	return ok
+}
+
 // UpdateDuration 记录前端实测出来的时长（服务端无法解码时很有用）。
 func (l *Library) UpdateDuration(id string, d float64) {
 	if d <= 0 || d > 86400 {

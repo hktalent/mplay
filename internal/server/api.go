@@ -53,6 +53,11 @@ func (s *Server) publicConfig() map[string]any {
 		"jamendoConfigured":   cfg.JamendoClientID != "",
 		"subtitlesConfigured": cfg.OSAPIKey != "",
 		"language":            cfg.Language,
+		"aiIdentify":          cfg.AIIdentify,
+		"aiBaseUrl":           cfg.AIBaseURL,
+		"aiModel":             cfg.AIModel,
+		"aiUploadAudio":       cfg.AIUploadAudio,
+		"aiConfigured":        strings.TrimSpace(cfg.AIAPIKey) != "",
 		"sources":             cfg.Sources,
 		"authRequired":        cfg.AuthToken != "",
 		"desktop":             s.o.Desktop,
@@ -78,6 +83,11 @@ type configPatch struct {
 	OpenSubtitlesUser   *string          `json:"opensubtitlesUsername"`
 	OpenSubtitlesPass   *string          `json:"opensubtitlesPassword"`
 	Language            *string          `json:"language"`
+	AIIdentify          *bool            `json:"aiIdentify"`
+	AIBaseURL           *string          `json:"aiBaseUrl"`
+	AIAPIKey            *string          `json:"aiApiKey"`
+	AIModel             *string          `json:"aiModel"`
+	AIUploadAudio       *bool            `json:"aiUploadAudio"`
 	Sources             *[]config.Source `json:"sources"`
 	AuthToken           *string          `json:"authToken"`
 }
@@ -146,6 +156,24 @@ func (s *Server) handlePostConfig(w http.ResponseWriter, r *http.Request) {
 	}
 	if p.AuthToken != nil {
 		cfg.AuthToken = strings.TrimSpace(*p.AuthToken)
+	}
+	if p.AIIdentify != nil {
+		cfg.AIIdentify = *p.AIIdentify
+	}
+	if p.AIBaseURL != nil {
+		cfg.AIBaseURL = strings.TrimSpace(*p.AIBaseURL)
+	}
+	if p.AIModel != nil {
+		cfg.AIModel = strings.TrimSpace(*p.AIModel)
+	}
+	if p.AIUploadAudio != nil {
+		cfg.AIUploadAudio = *p.AIUploadAudio
+	}
+	if p.AIAPIKey != nil {
+		// 前端留空表示「保持原样」，避免每次改开关就把 key 清掉
+		if v := strings.TrimSpace(*p.AIAPIKey); v != "" {
+			cfg.AIAPIKey = v
+		}
 	}
 	cfg.Normalize()
 	if err := cfg.Save(); err != nil {

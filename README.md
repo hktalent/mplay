@@ -131,6 +131,9 @@ CI 里 `urlbox` 是现场 `cargo build` 的（Linux 会装 webkit2gtk 依赖）�
 | GET/POST | `/api/config` | 配置读写（密钥只回布尔） |
 | GET | `/api/library?q=&kind=&filter=&sort=&limit=` | 曲库，`filter=lyric|nolyric`，`kind=audio|video` |
 | POST | `/api/library/scan` | 重新扫描 |
+| POST | `/api/track/{id}/identify` | 单曲识别歌名（body `apply/audio/fetchLyrics`） |
+| POST | `/api/library/identify` | 批量识别未匹配曲目（body `limit/onlyMissing/apply`） |
+| POST | `/api/ai/check` | 探测 AI 端点是否可用 |
 | GET | `/api/track/{id}`、`/api/stats` | 单曲详情、统计 |
 | GET | `/api/lyric/{id}?force=1&pick=` | 取歌词（按优先级自动解析） |
 | POST | `/api/lyric/{id}?ext=.lrc` | 原始文本导入（body 为纯文本） |
@@ -143,6 +146,31 @@ CI 里 `urlbox` 是现场 `cargo build` 的（Linux 会装 webkit2gtk 依赖）�
 | GET | `/media/{id}`、`/cover/{id}` | 媒体流（Range）、封面 |
 
 设置 `authToken` 后，`/api` 与 `/media` 都要求 `X-Mplay-Token` 头、`?token=` 或 `mplay_token` Cookie。
+
+## 智能识别歌名（本地规则 + 可选 AI）
+
+资源站下来的文件经常叫 `01. 某站 - 歌手 - 歌名 [320k].mp3`，甚至是 `abc1234.mp3`，标签也没有。识别流程分三段，**越往后越贵，所以按顺序短路**：
+
+1. **本地候选**：内嵌标签 → 文件名（正序 + 反序 + 去括号/去后缀）→ 已有歌词第一句。零成本、离线可用。
+2. **歌词库校验**：拿候选去 LRCLIB 搜，按「歌名 0.62 / 歌手 0.23 / 时长 0.15」加权打分，≥0.62 才算命中，直接把**歌词库确认过的歌名**写回曲库（这一步不需要 AI）。
+3. **AI 兜底**：只有前两步都没把握（未命中或置信 <0.8）才问模型。模型返回的答案**仍要过一遍歌词库校验**：
+   - 批量识别（`POST /api/library/identify`）只写回「校验通过」的结果，没把握的条目在响应里给候选建议，不落库；
+   - 单曲识别（`POST /api/track/{id}/identify`）校验通过或模型置信 ≥0.75 才写回，否则返回 `apply:false` 并提示「结果没把握，未写回：最接近 …」，避免用噪声覆盖原来的文件名线索。
+
+### 配置（设置页 →「AI 元数据识别（可选）」）
+
+| 字段 | 说明 |
+| --- | --- |
+| `aiIdentify` | 总开关。关闭时只用本地规则 + 歌词库，功能照常可用 |
+| `aiBaseUrl` | OpenAI 兼容端点，如豆包方舟 `https://ark.cn-beijing.volces.com/api/v3`、`https://api.openai.com/v1`，自建 vLLM/Ollama 同样填 `/v1` |
+| `aiModel` | 模型/推理接入点 ID，如 `doubao-seed-1-6` |
+| `aiApiKey` | 密钥（保存后接口只回 `aiConfigured` 布尔，不回明文） |
+| `aiUploadAudio` | 允许把音频片段发给模型。默认关闭；打开后只在**单曲手动点「识别」**时上传，批量识别永远只发文本 |
+
+- 界面入口：曲库工具条「识别未匹配」（批量，默认只处理缺歌名/歌手的音频，单次上限 20 条、总时长 90 秒）；播放器歌词工具条「识别」（单曲，可带上音频片段）；设置页「测试连通」。
+- 音频上传细节：只取文件前 6 MB，`m4a/mp4` 按 `mp4` 传、其余按扩展名传，走 `input_audio`（base64），失败自动降级为纯文本识别。
+- 隐私边界：不开 `aiUploadAudio` 时，只有文件名、时长和歌词前几行会离开本机；开了也只在你手动点单曲识别时上传片段。
+- 不开 AI 完全能用：本地规则 + LRCLIB 校验这条路没有任何外部模型参与。
 
 ## 部署到 m.51pwn.com
 
@@ -167,6 +195,7 @@ sudo cp packaging/nginx-m.51pwn.com.conf /etc/nginx/conf.d/m.51pwn.com.conf && s
   - `internal/config` 配置与环境变量；`internal/media` 扫描、标签、文件名解析、封面、Range
   - `internal/lyrics` LRC/SRT/VTT/ASS 解析、编码、LRCLIB、字幕库、片段索引
   - `internal/music` 在线音源聚合、网易云歌词检索、自定义音源
+  - `internal/identify` 歌名识别：本地候选生成 + LRCLIB 打分校验 + OpenAI 兼容客户端
   - `internal/server` 路由与 API；`internal/desktop` urlbox/浏览器/系统播放器
   - `web/` 前端：`index.html` 结构、`style.css` 固定头尾与播放器、`lyrics.js` 解析+同步、`player.js` 播放引擎、`app.js` 路由与业务
 
@@ -185,3 +214,5 @@ sudo cp packaging/nginx-m.51pwn.com.conf /etc/nginx/conf.d/m.51pwn.com.conf && s
 - Range：`206 Partial Content` + 正确 `Content-Range`
 - 歌词片段 `故事的小黄花` → 本地命中「晴天 @0.5s」，网易云返回 10 条并带命中歌词行
 - 播放器页面：歌词逐行高亮随进度滚动、视频字幕压在画面上、顶栏/底栏始终可见
+- 歌名识别（假 AI 端点 + 真 LRCLIB 实测）：`abc1234.mp3` 经 AI 给出「夜空中最亮的星 - 逃跑计划」，再被 LRCLIB 校验为 0.99 写回并拉到 33 行同步歌词；AI 只说「测试歌曲/测试歌手」(0.55) 时单曲识别返回 `apply:false`、批量只给建议不落库；未配置 AI 时功能退化为纯本地候选，不报错
+- 设置页：填 base/model/key → 保存 → 「测试连通」回显模型名，`/api/config` 只回 `aiConfigured` 布尔

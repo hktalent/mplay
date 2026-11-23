@@ -50,6 +50,14 @@ type Config struct {
 	Language string   `json:"language"`
 	Sources  []Source `json:"sources"`
 
+	// AI 元数据识别（可选）：任何 OpenAI 兼容的 /chat/completions 端点都能接。
+	// 不填 key/端点时整条链路不参与，识别会退回本地规则 + 歌词库校验。
+	AIIdentify    bool   `json:"aiIdentify,omitempty"`
+	AIBaseURL     string `json:"aiBaseUrl,omitempty"`
+	AIAPIKey      string `json:"aiApiKey,omitempty"`
+	AIModel       string `json:"aiModel,omitempty"`
+	AIUploadAudio bool   `json:"aiUploadAudio,omitempty"` // 是否允许把音频片段上传给 AI
+
 	// AuthToken 非空时，/api 与 /media 都要求带 token（公开部署时防止曲库裸奔）。
 	AuthToken string `json:"authToken,omitempty"`
 

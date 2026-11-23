@@ -1045,6 +1045,21 @@
     if ($('in-token') && !$('in-token').dataset.touched) {
       $('in-token').placeholder = c.authRequired ? '已设置，留空保持不变' : '留空表示不校验';
     }
+    set('sw-ai', c.aiIdentify);
+    set('sw-ai-audio', c.aiUploadAudio);
+    if ($('tag-ai')) {
+      $('tag-ai').textContent = !c.aiIdentify ? '未启用' : (c.aiConfigured ? '已启用' : '缺 API Key');
+    }
+    if ($('in-ai-base') && !$('in-ai-base').dataset.touched) $('in-ai-base').value = c.aiBaseUrl || '';
+    if ($('in-ai-model') && !$('in-ai-model').dataset.touched) $('in-ai-model').value = c.aiModel || '';
+    if ($('in-ai-key') && !$('in-ai-key').dataset.touched) {
+      $('in-ai-key').placeholder = c.aiConfigured ? '已配置（留空保持不变）' : '未配置';
+    }
+    if ($('ai-hint')) {
+      $('ai-hint').textContent = c.aiIdentify
+        ? (c.aiConfigured ? 'AI 识别已启用；音频片段上传：' + (c.aiUploadAudio ? '允许' : '关闭') : '已开启但还没有 Key，识别会退回本地规则 + 歌词库校验')
+        : '当前只走本地规则 + 歌词库校验，不调用任何外部 AI。';
+    }
 
     const kv = $('server-kv');
     kv.innerHTML = '';
@@ -1439,8 +1454,10 @@
     toggle('sw-sidecar', 'writeSidecar');
     toggle('sw-itunes', 'enableITunes');
     toggle('sw-archive', 'enableArchive');
+    toggle('sw-ai', 'aiIdentify');
+    toggle('sw-ai-audio', 'aiUploadAudio');
 
-    ['in-os-key', 'in-jamendo', 'in-sources', 'in-token'].forEach(function (id) {
+    ['in-os-key', 'in-jamendo', 'in-sources', 'in-token', 'in-ai-base', 'in-ai-model', 'in-ai-key'].forEach(function (id) {
       const el = $(id);
       if (el) el.addEventListener('input', function () { this.dataset.touched = '1'; });
     });
@@ -1473,6 +1490,77 @@
         $('in-os-key').dataset.touched = '';
         toast('音源配置已保存');
       });
+    });
+
+    $('btn-save-ai').addEventListener('click', function () {
+      const patch = {
+        aiIdentify: !!$('sw-ai').checked,
+        aiUploadAudio: !!$('sw-ai-audio').checked
+      };
+      if ($('in-ai-base').dataset.touched) patch.aiBaseUrl = $('in-ai-base').value.trim();
+      if ($('in-ai-model').dataset.touched) patch.aiModel = $('in-ai-model').value.trim();
+      if ($('in-ai-key').dataset.touched && $('in-ai-key').value.trim()) patch.aiApiKey = $('in-ai-key').value.trim();
+      patchConfig(patch, function (err) {
+        if (err) return;
+        ['in-ai-base', 'in-ai-model', 'in-ai-key'].forEach(function (id) { $(id).dataset.touched = ''; });
+        $('in-ai-key').value = '';
+        toast('AI 识别设置已保存');
+      });
+    });
+
+    $('btn-ai-test').addEventListener('click', function () {
+      const btn = this;
+      btn.disabled = true;
+      api('/api/ai/check', { method: 'POST' }).then(function (d) {
+        toast(d.ok ? '连通正常（' + (d.model || '模型') + '）' : (d.hint || '接口不可用'), !d.ok);
+      }).catch(function (e) { toast(e.message, true); }).then(function () { btn.disabled = false; });
+    });
+
+    $('btn-identify-batch').addEventListener('click', function () {
+      const btn = this;
+      if (btn.disabled) return;
+      btn.disabled = true;
+      toast('正在逐条识别未匹配曲目…');
+      api('/api/library/identify', { method: 'POST', body: { limit: 20, apply: true, onlyMissing: true } })
+        .then(function (d) {
+          const extra = d.failed ? '，' + d.failed + ' 条没把握' : '';
+          toast('识别完成：处理 ' + d.processed + ' 条，写回 ' + d.updated + ' 条' + extra);
+          return loadLibrary();
+        })
+        .catch(function (e) { toast(e.message, true); })
+        .then(function () { btn.disabled = false; });
+    });
+
+    $('btn-identify').addEventListener('click', function () {
+      const item = S.current;
+      if (!item || !item.mediaId) { toast('先播放一首曲库里的歌'); return; }
+      const btn = this;
+      if (btn.disabled) return;
+      btn.disabled = true;
+      toast('正在识别这首歌…');
+      api('/api/track/' + encodeURIComponent(item.mediaId) + '/identify', {
+        method: 'POST',
+        body: { apply: true, audio: true, fetchLyrics: true }
+      }).then(function (d) {
+        const best = d.best || {};
+        if (d.item) {
+          item.title = d.item.title || item.title;
+          item.artist = d.item.artist || item.artist;
+          item.album = d.item.album || item.album;
+          $('art-title').textContent = item.title;
+          $('art-artist').textContent = [item.artist, item.album].filter(Boolean).join(' · ');
+        }
+        if (d.apply) {
+          toast('已识别为 ' + [best.title, best.artist].filter(Boolean).join(' - ') +
+            (best.verified ? '' : '（未经歌词库校验，建议核对）'));
+          loadLyricFor(item, false, 0);
+          loadLibrary().catch(function () {});
+        } else {
+          toast(d.error || ('没找到可靠结果' + (best.title ? '，最接近：' + best.title : '')), true);
+        }
+      }).catch(function (e) {
+        toast(e.message, true);
+      }).then(function () { btn.disabled = false; });
     });
 
     $('btn-save-token').addEventListener('click', function () {

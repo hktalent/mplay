@@ -47,6 +47,10 @@
           <svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 12a8 8 0 1 1-2.4-5.7"/><path d="M20 4v5h-5"/></svg>
           重新扫描
         </button>
+        <button class="btn ghost" id="btn-identify-batch" type="button" title="逐条识别缺歌名/歌手的曲目，命中后写回曲库">
+          <svg class="i" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6"/><path d="M16 16l5 5"/><path d="M11 8v6M8 11h6"/></svg>
+          识别未匹配
+        </button>
       </div>
     </div>
 
@@ -177,6 +181,7 @@
           <div class="lyric-tools">
             <button class="mini-btn" id="btn-offset-down" type="button" title="歌词提前 0.1 秒">−0.1s</button>
             <button class="mini-btn" id="btn-offset-up" type="button" title="歌词延后 0.1 秒">+0.1s</button>
+            <button class="mini-btn" id="btn-identify" type="button" title="按文件名/标签/歌词片段识别歌名，再精确拉歌词">识别</button>
             <button class="mini-btn" id="btn-lyric-refetch" type="button" title="重新从歌词库拉取">重拉</button>
             <button class="mini-btn" id="btn-lyric-pick" type="button" title="从候选里挑一份">选择</button>
             <button class="mini-btn" id="btn-lyric-import" type="button" title="导入本地歌词/字幕">导入</button>
@@ -241,6 +246,39 @@
           <label for="in-os-key">OpenSubtitles API Key（可选）</label>
           <input id="in-os-key" type="text" placeholder="视频没有同名字幕时用它检索" spellcheck="false">
         </div>
+      </section>
+
+      <section class="card">
+        <header class="card-head">
+          <h2>AI 元数据识别（可选）</h2>
+          <span class="tag" id="tag-ai"></span>
+        </header>
+        <p class="card-desc">文件名和标签都对不上时，用 OpenAI 兼容接口识别歌名/歌手/专辑，再拿结果去歌词库精确匹配。不填端点就不启用，识别会退回「本地规则 + 歌词库校验」。</p>
+        <div class="switch-row">
+          <div><b>启用 AI 识别</b><p class="tiny">只在点「识别」或「识别未匹配」时调用，不会自动批量上传。</p></div>
+          <label class="switch"><input type="checkbox" id="sw-ai"><i></i></label>
+        </div>
+        <div class="field-row">
+          <label for="in-ai-base">接口地址（OpenAI 兼容，含 /v1）</label>
+          <input id="in-ai-base" type="text" placeholder="https://ark.cn-beijing.volces.com/api/v3 或 https://api.openai.com/v1" spellcheck="false">
+        </div>
+        <div class="field-row">
+          <label for="in-ai-model">模型名</label>
+          <input id="in-ai-model" type="text" placeholder="例如 doubao-seed-1-6 / gpt-4o-mini" spellcheck="false">
+        </div>
+        <div class="field-row">
+          <label for="in-ai-key">API Key</label>
+          <input id="in-ai-key" type="password" placeholder="留空保持不变；只存在本机配置文件里" spellcheck="false">
+        </div>
+        <div class="switch-row">
+          <div><b>允许上传音频片段</b><p class="tiny">开启后，点「识别」会把文件开头 6MB 发给上面的接口；关闭则只发文件名/标签/歌词这些文本。</p></div>
+          <label class="switch"><input type="checkbox" id="sw-ai-audio"><i></i></label>
+        </div>
+        <div class="row end">
+          <button class="btn ghost" id="btn-ai-test" type="button">测试连通</button>
+          <button class="btn" id="btn-save-ai" type="button">保存</button>
+        </div>
+        <p class="tiny" id="ai-hint"></p>
       </section>
 
       <section class="card">
