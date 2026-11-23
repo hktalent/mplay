@@ -69,7 +69,7 @@ jobs:
       matrix:
         include:
           - name: macos-universal
-            os: macos-14
+            os: macos-latest
             label: macos-universal
             goos: darwin
             goarch: arm64          # 两个架构各自编译后 lipo 合成通用包
