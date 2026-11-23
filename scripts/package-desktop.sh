@@ -120,15 +120,22 @@ fi
 
 # ── 归档 ──
 ARCHIVE=""
+# 压 zip 时优先用能正确写 UTF-8 文件名的那几个工具：
+# Windows 自带的 Compress-Archive 会把中文文件名压成乱码（实测 使用说明.txt → ??），
+# 所以把它放到最后，前面用 7z / Python zipfile（会设置 UTF-8 flag）。
 make_zip() { # $1=源路径 $2=输出 zip
+  local src="$1" dst="$2"
   if command -v zip >/dev/null 2>&1; then
-    (cd "$(dirname "$1")" && zip -qry "$2" "$(basename "$1")")
+    (cd "$(dirname "$src")" && zip -qry "$dst" "$(basename "$src")")
   elif command -v 7z >/dev/null 2>&1; then
-    7z a -tzip -bso0 -bsp0 "$2" "$1" >/dev/null
+    7z a -tzip -bso0 -bsp0 "$dst" "$src" >/dev/null
+  elif command -v python3 >/dev/null 2>&1 || command -v python >/dev/null 2>&1; then
+    local py="python3"; command -v python3 >/dev/null 2>&1 || py="python"
+    "$py" -c "import os, shutil, sys; src, dst = sys.argv[1], sys.argv[2]; base = dst[:-4] if dst.lower().endswith('.zip') else dst; shutil.make_archive(base, 'zip', os.path.dirname(src), os.path.basename(src))" "$src" "$dst"
   elif command -v powershell.exe >/dev/null 2>&1; then
-    powershell.exe -NoProfile -Command "Compress-Archive -Path '$1' -DestinationPath '$2' -Force"
+    powershell.exe -NoProfile -Command "Compress-Archive -Path '$src' -DestinationPath '$dst' -Force"
   else
-    echo "[desktop] 没有 zip/7z/powershell，无法生成 zip" >&2; exit 1
+    echo "[desktop] 没有 zip/7z/python/powershell，无法生成 zip" >&2; exit 1
   fi
 }
 
