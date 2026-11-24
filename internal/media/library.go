@@ -693,16 +693,33 @@ func (l *Library) UpdateDuration(id string, d float64) {
 }
 
 // Stats 返回曲库概览。
+//
+// 口径（界面上的四个数字）：
+//   - total      全部音视频数
+//   - audio      音频数
+//   - audioWithLyric  音频里有歌词的条数（纯音乐结论不算有歌词）
+//   - pending    音频里既没歌词、也没有「无歌词」结论的条数（= 需要配词）
+//
+// withLyric 保留为「所有条目里有歌词的总数」（视频字幕也算），老代码还在用。
 func (l *Library) Stats() map[string]any {
 	l.mu.RLock()
 	defer l.mu.RUnlock()
-	var audio, video, withLyric int
+	var total, audio, video, withLyric, audioWithLyric, noLyric, pending int
 	var bytes int64
 	for _, e := range l.entries {
+		total++
 		if e.Kind == "video" {
 			video++
 		} else {
 			audio++
+			switch {
+			case e.LyricSource != "":
+				audioWithLyric++
+			case e.NoLyric != "":
+				noLyric++
+			default:
+				pending++
+			}
 		}
 		if e.LyricSource != "" {
 			withLyric++
@@ -710,14 +727,18 @@ func (l *Library) Stats() map[string]any {
 		bytes += e.Size
 	}
 	return map[string]any{
-		"audio":     audio,
-		"video":     video,
-		"withLyric": withLyric,
-		"bytes":     bytes,
-		"roots":     len(l.dirs()),
-		"scannedAt": l.scanned.Unix(),
-		"scanning":  l.scanning.Load(),
-		"error":     l.errMsg,
+		"total":          total,
+		"audio":          audio,
+		"video":          video,
+		"withLyric":      withLyric,
+		"audioWithLyric": audioWithLyric,
+		"noLyric":        noLyric,
+		"pending":        pending,
+		"bytes":          bytes,
+		"roots":          len(l.dirs()),
+		"scannedAt":      l.scanned.Unix(),
+		"scanning":       l.scanning.Load(),
+		"error":          l.errMsg,
 	}
 }
 
