@@ -72,7 +72,7 @@ func TestAskTextMode(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := New(Options{Enabled: true, BaseURL: srv.URL + "/v1", APIKey: "test-key", Model: "m1"}, srv.Client())
+	c := New(Options{Enabled: true, BaseURL: srv.URL + "/v1", APIKey: "test-key", Model: "m1", AllowPrivate: true}, srv.Client())
 	cand, err := c.Ask(context.Background(), Hints{Name: "abc.mp3"}, false)
 	if err != nil {
 		t.Fatalf("识别失败: %v", err)
@@ -103,7 +103,7 @@ func TestAskAudioMode(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := New(Options{Enabled: true, BaseURL: srv.URL + "/v1", Model: "m1", AllowAudio: true}, srv.Client())
+	c := New(Options{Enabled: true, BaseURL: srv.URL + "/v1", Model: "m1", AllowAudio: true, AllowPrivate: true}, srv.Client())
 	if _, err := c.Ask(context.Background(), Hints{Name: "song.mp3", Path: f, Ext: ".mp3"}, true); err != nil {
 		t.Fatalf("音频模式识别失败: %v", err)
 	}
@@ -126,7 +126,7 @@ func TestAskDisabledOrUnauthorized(t *testing.T) {
 		_, _ = w.Write([]byte(`{"error":{"message":"bad key"}}`))
 	}))
 	defer srv.Close()
-	c2 := New(Options{Enabled: true, BaseURL: srv.URL + "/v1", Model: "m"}, srv.Client())
+	c2 := New(Options{Enabled: true, BaseURL: srv.URL + "/v1", Model: "m", AllowPrivate: true}, srv.Client())
 	_, err := c2.Ask(context.Background(), Hints{Name: "a.mp3"}, false)
 	if err == nil || !strings.Contains(err.Error(), "401") {
 		t.Fatalf("应把 401 报出来，实际 %v", err)
@@ -138,7 +138,7 @@ func TestPing(t *testing.T) {
 		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"ok"}}]}`))
 	}))
 	defer srv.Close()
-	c := New(Options{Enabled: true, BaseURL: srv.URL + "/v1", Model: "m"}, srv.Client())
+	c := New(Options{Enabled: true, BaseURL: srv.URL + "/v1", Model: "m", AllowPrivate: true}, srv.Client())
 	if err := c.Ping(context.Background()); err != nil {
 		t.Fatalf("ping 失败: %v", err)
 	}

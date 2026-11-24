@@ -27,8 +27,11 @@
     view: 'library',
     token: (function () {
       const q = new URLSearchParams(location.search).get('token');
-      return q || LS.get('token', '') || '';
+      // 从 ?token= 进来的一次性链接，落地到 localStorage，后续请求/媒体流才能带上
+      if (q) { LS.set('token', q); return q; }
+      return LS.get('token', '') || '';
     })(),
+    tokenAsked: false,
     config: null,
     desktop: false,
     lib: { items: [], total: 0, stats: null, roots: [] },
@@ -111,6 +114,18 @@
     toastTimer = setTimeout(function () { el.hidden = true; }, isErr ? 5200 : 2400);
   }
 
+  // askToken 在实例要求令牌但浏览器里没有时弹一次输入框：
+  // 输对了存进 localStorage 并刷新（媒体流/封面都是独立请求，必须刷新后统一带上）。
+  function askToken(msg) {
+    if (S.tokenAsked) return;
+    S.tokenAsked = true;
+    const v = window.prompt(msg || '这个实例设置了访问令牌，请输入 token（服务器「设置 → 访问令牌」里可以看到）', '');
+    if (v && v.trim()) {
+      LS.set('token', v.trim());
+      location.reload();
+    }
+  }
+
   async function api(path, opts) {
     opts = opts || {};
     const headers = Object.assign({}, opts.headers || {});
@@ -122,8 +137,12 @@
     }
     const res = await fetch(path, { method: opts.method || 'GET', headers: headers, body: body });
     if (res.status === 401 || res.status === 403) {
-      const err = new Error('需要访问令牌，请在「设置」里填入 token');
+      let info = null;
+      try { info = await res.json(); } catch (e) { info = null; }
+      const err = new Error((info && info.error) || '需要访问令牌，请在「设置」里填入 token');
       err.auth = true;
+      err.authRequired = !!(info && info.authRequired);
+      err.hint = (info && info.hint) || '';
       throw err;
     }
     const ct = res.headers.get('content-type') || '';
@@ -1176,10 +1195,13 @@
       S.config = await api('/api/config');
       S.desktop = !!S.config.desktop;
       if (S.config.authRequired && !S.token) {
-        toast('这个实例需要访问令牌，请在设置里填入', true);
+        askToken('这个实例设置了访问令牌，请输入 token');
       }
     } catch (e) {
-      if (e.auth) S.config = null;
+      if (e.auth) {
+        S.config = null;
+        askToken(e.hint || e.message);
+      }
       toast('实例配置读取失败：' + e.message, true);
     }
     renderSettings();

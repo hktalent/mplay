@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/hktalent/mplay/internal/config"
+	"github.com/hktalent/mplay/internal/netguard"
 )
 
 // Result 是一条在线搜索结果。
@@ -494,6 +495,11 @@ func (s *Searcher) searchCustom(ctx context.Context, src config.Source, q string
 	}
 	raw := strings.ReplaceAll(src.Search, "{q}", url.QueryEscape(q))
 	raw = strings.ReplaceAll(raw, "{limit}", strconv.Itoa(limit))
+	// 自定义音源是唯一「由配置决定的目标地址」，必须挡住内网/环回：
+	// 否则任何能改配置的人都能让服务器替他请求 127.0.0.1 上的其它服务。
+	if err := netguard.CheckURL(ctx, raw); err != nil {
+		return nil, err
+	}
 	var payload any
 	if err := s.getJSON(ctx, raw, src.Headers, &payload); err != nil {
 		return nil, err

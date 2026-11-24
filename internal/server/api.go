@@ -18,6 +18,7 @@ import (
 	"github.com/hktalent/mplay/internal/lyrics"
 	"github.com/hktalent/mplay/internal/media"
 	"github.com/hktalent/mplay/internal/music"
+	"github.com/hktalent/mplay/internal/netguard"
 )
 
 // ---------- 健康检查 / 配置 ----------
@@ -30,7 +31,8 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 		"platform": config.Platform(),
 		"uptime":   time.Since(s.start).Round(time.Second).String(),
 		"stats":    s.o.Lib.Stats(),
-		"roots":    s.o.Cfg.MediaDirs,
+		// 健康检查是对外开放的（监控用），不能顺手把媒体目录的绝对路径送出去
+		"roots": len(s.o.Cfg.MediaDirs),
 	})
 }
 
@@ -38,11 +40,24 @@ func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"version": s.o.Version, "api": "mplay/v1"})
 }
 
-func (s *Server) publicConfig() map[string]any {
+// publicConfig 是给前端看的配置快照。
+// 非本机直连（公网/反代）时隐去绝对路径与音源请求头，避免把用户主目录布局
+// 和自建音源的凭据顺手送出去。
+func (s *Server) publicConfig(local bool) map[string]any {
 	cfg := s.o.Cfg
+	cfgPath := ""
+	if local {
+		cfgPath = cfg.Path()
+	}
+	mediaDirs := cfg.MediaDirs
+	sources := cfg.Sources
+	if !local {
+		mediaDirs = baseNames(cfg.MediaDirs)
+		sources = redactSources(cfg.Sources)
+	}
 	return map[string]any{
 		"addr":                cfg.Addr,
-		"mediaDirs":           cfg.MediaDirs,
+		"mediaDirs":           mediaDirs,
 		"writeSidecar":        cfg.WriteSidecar,
 		"enableITunes":        cfg.EnableITunes,
 		"enableArchive":       cfg.EnableArchive,
@@ -61,18 +76,19 @@ func (s *Server) publicConfig() map[string]any {
 		"aiModel":             cfg.AIModel,
 		"aiUploadAudio":       cfg.AIUploadAudio,
 		"aiConfigured":        strings.TrimSpace(cfg.AIAPIKey) != "",
-		"sources":             cfg.Sources,
+		"sources":             sources,
 		"authRequired":        cfg.AuthToken != "",
 		"desktop":             s.o.Desktop,
-		"canPickFolder":       desktop.CanPickFolder(),
+		"canPickFolder":       local && desktop.CanPickFolder(),
 		"platform":            config.Platform(),
-		"configPath":          cfg.Path(),
+		"configPath":          cfgPath,
+		"localAccess":         local,
 		"version":             s.o.Version,
 	}
 }
 
 func (s *Server) handleGetConfig(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, s.publicConfig())
+	writeJSON(w, http.StatusOK, s.publicConfig(isLocal(r)))
 }
 
 type configPatch struct {
@@ -110,6 +126,27 @@ func (s *Server) handlePostConfig(w http.ResponseWriter, r *http.Request) {
 		errJSON(w, http.StatusBadRequest, err, "请求体必须是 JSON")
 		return
 	}
+	// 先校验「由配置决定的外网目标」：指向内网/环回的自定义音源或 AI 端点
+	// 会让服务器替人访问本机服务（SSRF），这里直接 400 拦掉，别等下次搜索才报错。
+	if p.Sources != nil {
+		for _, src := range *p.Sources {
+			if err := checkOutboundURL(r.Context(), src.Search); err != nil {
+				writeJSON(w, http.StatusBadRequest, map[string]any{
+					"error": "自定义音源的 searchUrl 不合法: " + err.Error(),
+				})
+				return
+			}
+		}
+	}
+	if p.AIBaseURL != nil {
+		if err := checkOutboundURL(r.Context(), *p.AIBaseURL); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]any{
+				"error": "AI 端点不合法: " + err.Error(),
+			})
+			return
+		}
+	}
+
 	cfg := s.o.Cfg
 	dirsChanged := false
 	if p.MediaDirs != nil {
@@ -206,12 +243,13 @@ func (s *Server) handlePostConfig(w http.ResponseWriter, r *http.Request) {
 		// 直接 Scan 会返回「扫描正在进行中」并把这次改动丢掉（曲库残留旧条目）。
 		s.o.Lib.RequestScan()
 	}
-	writeJSON(w, http.StatusOK, s.publicConfig())
+	writeJSON(w, http.StatusOK, s.publicConfig(isLocal(r)))
 }
 
 // ---------- 曲库 ----------
 
 func (s *Server) handleLibrary(w http.ResponseWriter, r *http.Request) {
+	local := isLocal(r)
 	q := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("q")))
 	kind := r.URL.Query().Get("kind")
 	filter := r.URL.Query().Get("filter")
@@ -249,7 +287,7 @@ func (s *Server) handleLibrary(w http.ResponseWriter, r *http.Request) {
 		if q != "" && !strings.Contains(strings.ToLower(e.Title+" "+e.Artist+" "+e.Album+" "+e.Name+" "+e.Path), q) {
 			continue
 		}
-		out = append(out, e)
+		out = append(out, redactEntry(e, local))
 	}
 
 	switch sortBy {
@@ -266,11 +304,15 @@ func (s *Server) handleLibrary(w http.ResponseWriter, r *http.Request) {
 	if limit > 0 && len(out) > limit {
 		out = out[:limit]
 	}
+	roots := s.o.Cfg.MediaDirs
+	if !local {
+		roots = baseNames(roots)
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"items": out,
 		"total": total,
 		"stats": s.o.Lib.Stats(),
-		"roots": s.o.Cfg.MediaDirs,
+		"roots": roots,
 	})
 }
 
@@ -290,7 +332,7 @@ func (s *Server) handleTrack(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusNotFound, map[string]any{"error": "曲目不存在"})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"item": e})
+	writeJSON(w, http.StatusOK, map[string]any{"item": redactEntry(e, isLocal(r))})
 }
 
 func (s *Server) handleDuration(w http.ResponseWriter, r *http.Request) {
@@ -535,8 +577,10 @@ func (s *Server) handleSources(w http.ResponseWriter, r *http.Request) {
 // handlePickFolder 弹出系统「选择文件夹」对话框，返回绝对路径。
 // 只对本机（回环）访问开放：这个动作会在服务器所在的那台机器上弹窗。
 func (s *Server) handlePickFolder(w http.ResponseWriter, r *http.Request) {
-	if !desktop.IsLoopback(s.o.Cfg.Addr) {
-		writeJSON(w, http.StatusForbidden, map[string]any{"error": "只有本机访问才能打开本地文件夹"})
+	// 判据必须是「请求来源」而不是监听地址：监听 127.0.0.1 + 反代对外时，
+	// 监听地址永远看着像回环，但弹窗动作绝不能被公网访客触发。
+	if !isLocal(r) {
+		writeJSON(w, http.StatusForbidden, map[string]any{"error": "只有本机直连才能打开本地文件夹"})
 		return
 	}
 	if !desktop.CanPickFolder() {
@@ -571,6 +615,10 @@ func (s *Server) handleOpen(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusForbidden, map[string]any{"error": "只有桌面版可以调用系统播放器/文件管理器"})
 		return
 	}
+	if !isLocal(r) {
+		writeJSON(w, http.StatusForbidden, map[string]any{"error": "只有本机直连才能调用系统播放器/文件管理器"})
+		return
+	}
 	e, ok := s.o.Lib.Get(body.ID)
 	if !ok {
 		writeJSON(w, http.StatusNotFound, map[string]any{"error": "曲目不存在"})
@@ -590,4 +638,15 @@ func (s *Server) handleOpen(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// checkOutboundURL 校验服务器主动出站的地址；空串视为「不启用」，直接放行。
+// {q} / {limit} 这类占位符先替换成无害值，只校验协议与主机。
+func checkOutboundURL(ctx context.Context, raw string) error {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil
+	}
+	probe := strings.NewReplacer("{q}", "x", "{limit}", "1").Replace(raw)
+	return netguard.CheckURL(ctx, probe)
 }

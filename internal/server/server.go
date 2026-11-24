@@ -2,6 +2,8 @@ package server
 
 import (
 	"bytes"
+	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"io"
 	"io/fs"
@@ -17,6 +19,7 @@ import (
 	"github.com/hktalent/mplay/internal/lyrics"
 	"github.com/hktalent/mplay/internal/media"
 	"github.com/hktalent/mplay/internal/music"
+	"github.com/hktalent/mplay/internal/netguard"
 )
 
 // Options 是服务端依赖，由 main 装配。
@@ -127,34 +130,81 @@ func (s *Server) securityHeaders(next http.Handler) http.Handler {
 	})
 }
 
-// auth 是可选的门禁：配置了 token 才启用（默认不设 token，本机直接访问）。
+// ctxKeyLocal 记录这一轮请求是不是「本机直连」，供各 handler 判断能否
+// 暴露绝对路径、能否调用本机 GUI 动作。
+type ctxKey int
+
+const ctxKeyLocal ctxKey = iota
+
+// isLocal 从 context 取本机直连判定；没有上下文时退回实时判断。
+func isLocal(r *http.Request) bool {
+	if v, ok := r.Context().Value(ctxKeyLocal).(bool); ok {
+		return v
+	}
+	return netguard.IsLocalRequest(r)
+}
+
+// auth 是门禁，规则（v1.4.1 收紧）：
+//   - 设了访问令牌：/api、/media、/cover 一律校验令牌（本机也一样）；
+//   - 没设令牌：只放行「本机直连」的请求，经反代/公网进来的一律 403。
+//     这一条专门对付「监听 127.0.0.1 + HTTPS 反代对外」这种部署：
+//     反代会把 RemoteAddr 改写成 127.0.0.1，只有代理头能识别真实来源。
+//   - 写方法额外校验同源，挡住第三方网页借浏览器打本机接口（CSRF）。
 func (s *Server) auth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		token := s.o.Cfg.AuthToken
-		if token == "" {
-			next.ServeHTTP(w, r)
-			return
-		}
+		local := netguard.IsLocalRequest(r)
 		p := r.URL.Path
-		if p == "/api/health" || !(strings.HasPrefix(p, "/api/") || strings.HasPrefix(p, "/media/") || strings.HasPrefix(p, "/cover/")) {
-			next.ServeHTTP(w, r)
-			return
-		}
-		given := r.Header.Get("X-Mplay-Token")
-		if given == "" {
-			given = r.URL.Query().Get("token")
-		}
-		if given == "" {
-			if c, err := r.Cookie("mplay_token"); err == nil {
-				given = c.Value
+		guarded := strings.HasPrefix(p, "/api/") || strings.HasPrefix(p, "/media/") || strings.HasPrefix(p, "/cover/")
+		token := strings.TrimSpace(s.o.Cfg.AuthToken)
+		if guarded && p != "/api/health" {
+			if token != "" {
+				given := tokenFrom(r)
+				if subtle.ConstantTimeCompare([]byte(given), []byte(token)) != 1 {
+					writeJSON(w, http.StatusUnauthorized, map[string]any{
+						"error": "需要访问令牌", "authRequired": true, "localRequest": local,
+					})
+					return
+				}
+			} else if !local {
+				writeJSON(w, http.StatusForbidden, map[string]any{
+					"error":        "此实例未设置访问令牌，已拒绝来自公网/反向代理的请求",
+					"authRequired": true,
+					"localRequest": false,
+					"hint":         "在服务器上打开设置 → 访问令牌，设一个令牌后用 https://m.51pwn.com/?token=你的令牌 访问",
+				})
+				return
+			}
+			if isUnsafeMethod(r.Method) && !netguard.SameOrigin(r) {
+				writeJSON(w, http.StatusForbidden, map[string]any{
+					"error": "拒绝跨站请求（Origin 与本站不一致）", "localRequest": local,
+				})
+				return
 			}
 		}
-		if given != token {
-			writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "需要访问令牌", "authRequired": true})
-			return
-		}
-		next.ServeHTTP(w, r)
+		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), ctxKeyLocal, local)))
 	})
+}
+
+func isUnsafeMethod(m string) bool {
+	switch m {
+	case http.MethodGet, http.MethodHead, http.MethodOptions:
+		return false
+	}
+	return true
+}
+
+// tokenFrom 依次从请求头、查询参数、Cookie 取访问令牌。
+func tokenFrom(r *http.Request) string {
+	if v := r.Header.Get("X-Mplay-Token"); v != "" {
+		return v
+	}
+	if v := r.URL.Query().Get("token"); v != "" {
+		return v
+	}
+	if c, err := r.Cookie("mplay_token"); err == nil {
+		return c.Value
+	}
+	return ""
 }
 
 // handleStatic 服务 go:embed 进来的 web 目录。

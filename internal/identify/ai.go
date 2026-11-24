@@ -11,6 +11,8 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	"github.com/hktalent/mplay/internal/netguard"
 )
 
 // Client 调用 OpenAI 兼容的 /chat/completions 接口做识别。
@@ -97,6 +99,13 @@ func (c *Client) Ask(ctx context.Context, h Hints, allowAudio bool) (Candidate, 
 		return Candidate{}, err
 	}
 
+	// 端点由配置决定（可被接口改写），出站前必须确认它是公网地址，
+	// 否则这台机器会变成一个可被指使去读内网/环回的探针。
+	if !c.Opt.AllowPrivate {
+		if err := netguard.CheckURL(ctx, c.Opt.BaseURL); err != nil {
+			return Candidate{}, fmt.Errorf("AI 端点不可用: %w", err)
+		}
+	}
 	url := strings.TrimRight(c.Opt.BaseURL, "/") + "/chat/completions"
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(payload))
 	if err != nil {
@@ -257,6 +266,13 @@ func (c *Client) Ping(ctx context.Context) error {
 	payload, err := json.Marshal(body)
 	if err != nil {
 		return err
+	}
+	// 端点由配置决定（可被接口改写），出站前必须确认它是公网地址，
+	// 否则这台机器会变成一个可被指使去读内网/环回的探针。
+	if !c.Opt.AllowPrivate {
+		if err := netguard.CheckURL(ctx, c.Opt.BaseURL); err != nil {
+			return fmt.Errorf("AI 端点不可用: %w", err)
+		}
 	}
 	url := strings.TrimRight(c.Opt.BaseURL, "/") + "/chat/completions"
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(payload))

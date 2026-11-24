@@ -193,7 +193,9 @@ CI 里 `urlbox` 是现场 `cargo build` 的（Linux 会装 webkit2gtk 依赖）�
 | POST | `/api/open` | `{"id":..,"action":"reveal"|"player"}`（仅桌面） |
 | GET | `/media/{id}`、`/cover/{id}` | 媒体流（Range）、封面 |
 
-设置 `authToken` 后，`/api` 与 `/media` 都要求 `X-Mplay-Token` 头、`?token=` 或 `mplay_token` Cookie。
+设置 `authToken` 后，`/api`、`/media`、`/cover` 都要求 `X-Mplay-Token` 头、`?token=` 或 `mplay_token` Cookie。
+
+**没设令牌时（v1.4.1 起）**：只有「本机直连」放行，经反向代理或公网进来的请求一律 `403`。判据是请求来源而不是监听地址：对端必须是回环、且没有任何转发头（`X-Forwarded-For`/`X-Real-IP`/`Forwarded`…）、且浏览器没标 `Sec-Fetch-Site: cross-site`。原因很实在——监听 `127.0.0.1` 再挂 HTTPS 反代对外时，`RemoteAddr` 永远是 `127.0.0.1`，只按监听地址判断等于把公网当本机。详见下面「安全模型」。
 
 ## 智能识别歌名（本地规则 + 可选 AI）
 
@@ -314,6 +316,22 @@ CI 里 `urlbox` 是现场 `cargo build` 的（Linux 会装 webkit2gtk 依赖）�
 | `enableKugou` / `enableNeteaseSource` | 酷狗默认 **true**、网易云默认 **false**；设置页 →「歌词与字幕」里两个开关 |
 | `GET /api/cache/status` | `{enabled,lrclib,kugou,pending,audio,withLyric,progress:{running,total,done,hit,miss,skipped,...}}`；`skipped` = 已判定纯音乐/无歌词 |
 | `POST /api/cache/run` | 立即缓存缺歌词的曲目；已在跑返回 `{already:true,pending}`，无需可缓则返回 `hint` |
+
+## 安全模型（v1.4.1）
+
+被人当面问过一句：「从互联网打开 m.51pwn.com，会不会读到我这台 Mac 上的非音频文件？」就按这个问题把边界重新收了一遍，结论和措施都写在下面，能复现的都留了验证方法。
+
+**先说结论：读不到任意文件，但有几处真实可利用的越权面，已全部堵上。**
+
+- **目录穿透：不存在。** `/media/{id}`、`/cover/{id}`、`/api/lyric/{id}` 的 `{id}` 都是扫描时算出的曲目哈希，先用 `Lib.Get(id)` 命中索引条目，再 `os.Open(entry.Path)`；请求里的字符串从不拼进文件路径。静态资源走 `go:embed` + `path.Clean` + 拒绝 `..`。实测 `--path-as-is` 打 `/media/../../../../etc/passwd` 之类：`mux` 先 307 归一到 `/etc/passwd`，落到静态处理器后 404，**没有任何文件内容返回**。歌词上传的 `ext` 参数只参与解析，落盘固定是 `<cache>/lyrics/<id>.json`。
+- **扫描只认音视频扩展名。** `WalkDir` 里只有 `audioExts`/`videoExts` 会进索引（`.mp3 .flac .m4a … .mp4 .mkv …`），其余文件连条目都不产生，所以「曲库里多出一条」这条路也读不到 `.txt`/`.json`/密钥文件。同名 sidecar 只读 `.lrc/.srt/.vtt/.ass` 这类字幕歌词文件。
+- **真正的风险是「改配置」而不是「穿透」。** 老版本没令牌 + 反代的情况下，任何人都能 `POST /api/config` 把 `mediaDirs` 改到 `/Users/<你>` 甚至 `/`，触发重扫后整盘音视频入库、再逐个 `/media/{id}` 下载（可能含私人录音、家庭视频）；`/api/library`、`/api/track`、`/api/config` 还会顺手交出绝对路径、配置路径、曲库清单。现在：公网/反代默认 403，非本机直连的响应里 `path`/`dir`/`configPath` 一律清空，`mediaDirs` 只回目录名。
+- **SSRF 已堵。** 自定义音源的 `searchUrl` 与 AI 端点都是「服务端主动出站」，旧版可以指向 `127.0.0.1` 上任意端口，错误串还会带响应体前 256 字节（等于一个读取原语，实测 `ssrf: HTTP 404 404 page not found` 就是内网接口的原文）。现在写入配置时校验、请求前再校验一次：只允许 `http/https`，解析出的地址落在内网/环回/链路本地/`169.254.169.254` 就拒绝。
+- **GUI 动作按请求来源判定。** 「打开文件夹」弹窗、「用系统播放器打开」以前只判 `Cfg.Addr` 是不是回环——反代场景下等于对全世界开放。现在必须请求本身来自本机直连。
+- **CSRF。** 写方法要求 `Origin` 与本站一致；第三方网页借浏览器 POST 本机接口会被 403。
+- **健康检查不再泄漏路径。** `/api/health` 对外开放（监控用），原来返回 `roots` 的绝对路径，现在只返回数量。
+
+还有两条**仍然建议照做**的运维习惯：公网部署一定设 `authToken`（`MPLAY_TOKEN` 或设置页）；令牌是 URL 里的 `?token=` 时，注意别把带令牌的链接贴到聊天里（虽然页面已设 `Referrer-Policy: no-referrer`，上游 nginx 的 access log 仍会记下完整 URL）。
 
 ## 部署到 m.51pwn.com
 

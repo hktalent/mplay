@@ -1,3 +1,49 @@
+## v1.4.1 · 安全收口：公网访问默认拒绝、SSRF 与路径泄漏封堵
+
+起因是一个很具体的问题：「从互联网打开 `m.51pwn.com`，会不会读到我 Mac 上的非音频文件？」为此把整个对外边界重新审了一遍，先在有 token/无 token 的实例上做了黑盒复现，再改代码、再复测。功能、界面、曲库口径完全不变，只动安全边界。
+
+### 审计结论（有实证）
+
+| 问题 | 状态 | 实测 |
+| --- | --- | --- |
+| 目录穿透（`/media/../..`、`/cover/..`、`/api/lyric/../..`） | **不成立** | `--path-as-is` 打一串 payload：`mux` 307 归一到 `/etc/passwd`，静态处理器回 404，无文件内容 |
+| 读非音视频文件（`~/.ssh`、`config.json` 等） | **不成立** | 索引只收 `audioExts`/`videoExts` 的文件，`/media/{id}` 的 `{id}` 是曲目哈希，路径来自索引 |
+| 未鉴权改配置 → 整盘音视频入库下载 | **成立（已修）** | `POST /api/config {"mediaDirs":["/Users/<你>"]}` 返回 200 并生效 |
+| 曲库/配置泄漏绝对路径、用户名、配置路径 | **成立（已修）** | `/api/library` 直接回 `path=/Users/…` |
+| SSRF：自定义音源/AI 端点可指向本机端口，错误串带响应体前 256 字节 | **成立（已修）** | `/api/search` 回 `ssrf: HTTP 404 404 page not found`（内网接口原文） |
+| 反代场景下「打开文件夹」「系统播放器」对本机判定的失效 | **成立（已修）** | 判据是 `Cfg.Addr`，反代时永远是回环 |
+| CSRF：第三方网页可让本机接口执行写操作 | **成立（已修）** | `Origin: https://evil.example` 的 POST 原本返回 200 |
+
+### 改了什么
+
+- **公网默认拒绝**（新增 `internal/netguard`）：没设 `authToken` 时，只有「本机直连」放行——对端回环、无任何转发头（`X-Forwarded-For`/`X-Real-IP`/`Forwarded`/`CF-Connecting-IP`…）、非 `Sec-Fetch-Site: cross-site`。经反代/公网一律 `403` 并给出可操作提示。伪造 `X-Forwarded-For: 127.0.0.1` 也不放行（只认「有没有代理头」，不认值）。
+- **令牌比较改常量时间**；`/api/health` 保持开放但只回媒体目录**数量**，不再回绝对路径。
+- **响应脱敏**：非本机直连时，条目 `path`/`dir`/sidecar `path` 清空、`configPath` 为空、`mediaDirs` 只回目录名、自定义音源的 `headers` 去掉（那里常有 Authorization/Cookie），并新增 `localAccess` 字段。
+- **SSRF 双向拦截**：`POST /api/config` 写入时校验 `sources[].searchUrl` 与 `aiBaseUrl`（非法直接 400），出站前（`music.searchCustom`、`identify.Ask`/`Ping`）再校验一次。只允许 `http/https`；解析结果落在 `127/8`、`10/8`、`172.16/12`、`192.168/16`、`100.64/10`、`169.254/16`、`::1`、`fc00::/7`、`fe80::/10` 等一律拒绝。
+- **GUI 动作改按请求来源判定**：`/api/pick/folder`、`/api/open` 必须本机直连；`canPickFolder` 在远程访问时恒为 `false`。
+- **CSRF 防护**：写方法要求 `Origin` 与本站一致（无 `Origin` 的 curl/桌面壳照旧放行）。
+- **启动告警**：非回环监听且没令牌时，日志打出醒目警告。
+- **前端**：`?token=` 落地到 `localStorage`（刷新/媒体流都能带上）；遇到 401/403 时弹一次令牌输入框，填对后自动刷新；设置里令牌说明同步。
+- **文档**：README 新增「安全模型」整节；API 段落更新鉴权口径。
+
+### 如何使用（如果你的场景是「本机 127.0.0.1 + HTTPS 反代对外」）
+
+1. 打开 `http://127.0.0.1:8737` → 设置 → 访问令牌，设一个够长的字符串（或在 `/etc/mplay/env` 写 `MPLAY_TOKEN=…` 后重启）。
+2. 以后从 `https://m.51pwn.com/?token=你的令牌` 进站一次即可，页面会把令牌存进本地，后续刷新不用再带。
+3. 没设令牌时直接访问 `https://m.51pwn.com` 会看到 403 与提示文案——这是预期行为，不是坏了。
+
+### 支持的环境
+
+macOS（Intel/Apple Silicon）、Linux（amd64/arm64）、Windows；Go 1.21+ 编译；浏览器 Chrome/Safari/Firefox 任一。
+
+### 验证
+
+- `go vet ./...`、`go test ./...` 全绿；新增 `internal/netguard`（IP 段/来源判定/同源）与 `internal/server/security_test.go`（反代 403、令牌、同源、脱敏）共 9 个用例。
+- 黑盒复测（无令牌实例）：带 `X-Forwarded-For` 打 `/api/config`、`/api/library`、`/api/stats`、`/media/*`、`/cover/*` 全部 403；本机直连照旧 200；`/api/health` 仍 200 且不含路径。
+- 带令牌 + 反代：`/api/config` 无 `configPath`、`mediaDirs` 只有目录名；`/api/library` 条目 `path`/`dir` 为空。
+- SSRF：把 `searchUrl` 指向 `127.0.0.1:8831/api/nope`、`aiBaseUrl` 指向 `169.254.169.254` 均 400。
+- 真实浏览器（Chrome）：本机直连 584 条曲库加载、点击播放、歌词条渲染、`errors: []`；再模拟「反代 + `?token=`」同一套流程，584 条、播放正常、`errors: []`；媒体流 Range 请求 `206 / audio/mpeg / 1024 字节`。
+
 ## v1.4.0 · 曲库四个数字 + 播放器常驻音量/歌词条 + 音频可视化
 
 这一版全是界面：把「有多少东西、有多少有词、还差多少」摆在第一屏，把音量、当前歌词、频谱都放回播放时眼睛会看的位置。功能行为不变，曲库与命中率口径不变。

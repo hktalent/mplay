@@ -33,7 +33,7 @@ import (
 )
 
 // version 可在构建时用 -ldflags "-X main.version=..." 覆盖。
-var version = "1.4.0"
+var version = "1.4.1"
 
 type stringList []string
 
@@ -159,6 +159,11 @@ func main() {
 	log.Printf("[mplay] v%s 已启动：%s", version, url)
 	log.Printf("[mplay] 配置: %s", cfg.Path())
 	log.Printf("[mplay] 缓存: %s", cacheDir)
+	// 安全提醒：非回环监听 + 没令牌 = 局域网上任何人都能改配置、下载曲库。
+	if !desktop.IsLoopback(actualAddr) && strings.TrimSpace(cfg.AuthToken) == "" {
+		log.Printf("[mplay] 警告：正在监听 %s 且未设置访问令牌，同网络内的人可以读取曲库并修改配置。"+
+			"请在网页「设置 → 访问令牌」里设一个令牌。", actualAddr)
+	}
 	if n := len(cfg.MediaDirs); n > 0 {
 		log.Printf("[mplay] 媒体目录 %d 个", n)
 	} else {

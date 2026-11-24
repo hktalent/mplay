@@ -51,6 +51,9 @@ type Options struct {
 	AllowAudio    bool  // 是否允许把音频片段发给服务
 	MaxAudioBytes int64 // 单次上传上限，默认 6MB
 	Timeout       time.Duration
+	// AllowPrivate 只用于测试：放行指向 127.0.0.1 的端点（httptest）。
+	// 正常运行时必须为 false，否则 AI 端点会变成一个访问内网的跳板。
+	AllowPrivate bool
 }
 
 // Ready 报告 AI 这条链路是否可用。
