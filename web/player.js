@@ -189,11 +189,13 @@
   M.Player = Player;
 
   /* ── 音频可视化 ─────────────────────────────────────
-     用 WebAudio 的 AnalyserNode 取真实频谱，驱动一排竖条；
-     为了不把主播放元素绑进 WebAudio（跨域音源会被静音），
-     这里用一只隐藏的 <audio> 单独拉同一路流做分析，输出增益为 0，
-     所以听不到第二次声音，也不会影响主播放。
+     一处分析、多处显示：Spectrum 负责取频谱（整页只有一个），
+     Bars 负责把 levels 画成竖条，播放页大条带和迷你条的小频谱共用同一份数据。
+     为了不把主播放元素绑进 WebAudio（跨域音源会被静音，且不可撤销），
+     分析用一只隐藏的 <audio> 拉同一路流，输出接 gain=0，听不到第二次声音。
      拿不到真实频谱（跨域 / 无 WebAudio / 持续无信号）时退回装饰动画。 */
+  const VIZ_N = 48;
+
   function canAnalyze(url) {
     if (!url) return false;
     if (String(url).slice(0, 5) === 'blob:') return true;
@@ -205,27 +207,14 @@
     }
   }
 
-  function Viz(el, player) {
+  /* 竖条渲染器：n 根柱子，draw(levels) 把 48 个频段采样成自己的根数 */
+  function Bars(el, n) {
     this.el = el;
-    this.player = player;
-    this.n = 48;
+    this.n = n;
     this.bars = [];
-    this.levels = new Array(this.n).fill(0);
-    this.playing = false;
-    this.mode = 'fake';
-    this.raf = 0;
-    this.silent = 0;
-    this.ctx = null;
-    this.analyser = null;
-    this.data = null;
-    this.anEl = null;
     this.el.hidden = true;
-    this.build();
-  }
-
-  Viz.prototype.build = function () {
     const frag = document.createDocumentFragment();
-    for (let i = 0; i < this.n; i++) {
+    for (let i = 0; i < n; i++) {
       const b = document.createElement('i');
       b.style.animationDelay = (-(0.15 + (i % 9) * 0.11)).toFixed(2) + 's';
       frag.appendChild(b);
@@ -233,47 +222,58 @@
     }
     this.el.innerHTML = '';
     this.el.appendChild(frag);
-  };
+  }
 
-  Viz.prototype.reset = function (item) {
-    const isAudio = !!(item && item.kind !== 'video');
-    this.el.hidden = !isAudio;
-    this.stop();
-    this.clearLevels();
-    this.anElStop();
-  };
-
-  Viz.prototype.clearLevels = function () {
+  Bars.prototype.clear = function () {
     for (let i = 0; i < this.n; i++) {
-      this.levels[i] = 0;
-      if (this.bars[i]) this.bars[i].style.height = '6%';
+      if (this.bars[i]) this.bars[i].style.height = '8%';
     }
   };
 
-  Viz.prototype.anElStop = function () {
-    if (this.anEl) {
-      try { this.anEl.pause(); } catch (e) {}
+  Bars.prototype.draw = function (levels) {
+    const len = levels.length;
+    for (let i = 0; i < this.n; i++) {
+      const lo = Math.floor((i / this.n) * len);
+      const hi = Math.max(lo + 1, Math.floor(((i + 1) / this.n) * len));
+      let sum = 0, c = 0;
+      for (let j = lo; j < hi && j < len; j++) { sum += levels[j]; c++; }
+      const v = c ? sum / c : 0;
+      const h = Math.max(6, Math.min(100, v * 100));
+      if (this.bars[i]) this.bars[i].style.height = h.toFixed(1) + '%';
     }
   };
 
-  Viz.prototype.stop = function () {
+  Bars.prototype.setVisible = function (v) { this.el.hidden = !v; };
+
+  Bars.prototype.setPlaying = function (playing) {
+    this.el.classList.toggle('is-playing', !!playing);
+  };
+
+  Bars.prototype.setFake = function (fake) {
+    this.el.classList.toggle('is-fake', !!fake);
+  };
+
+  /* 频谱数据源：一个页面只建一份，首次真正需要时才建 AudioContext */
+  function Spectrum(player) {
+    this.player = player;
+    this.levels = new Array(VIZ_N).fill(0);
+    this.bars = [];
     this.playing = false;
-    if (this.raf) { cancelAnimationFrame(this.raf); this.raf = 0; }
-    this.el.classList.remove('is-playing');
-    this.el.classList.remove('is-fake');
-    this.clearLevels();
+    this.mode = 'fake'; // fake | real
+    this.raf = 0;
+    this.silent = 0;
+    this.ctx = null;
+    this.analyser = null;
+    this.data = null;
+    this.anEl = null;
+  }
+
+  Spectrum.prototype.attach = function (renderer) {
+    this.bars.push(renderer);
+    return renderer;
   };
 
-  Viz.prototype.toFake = function () {
-    this.mode = 'fake';
-    this.anElStop();
-    this.clearLevels();
-    this.el.classList.add('is-fake');
-    this.el.classList.toggle('is-playing', this.playing);
-  };
-
-  /* 懒建音频图：只在第一次真正能分析的时候创建 */
-  Viz.prototype.ensureGraph = function () {
+  Spectrum.prototype.ensureGraph = function () {
     if (this.analyser) return true;
     const AC = window.AudioContext || window.webkitAudioContext;
     if (!AC) return false;
@@ -301,11 +301,52 @@
     }
   };
 
-  Viz.prototype.start = function () {
+  Spectrum.prototype.reset = function (item) {
+    this.stop();
+    this.levelClear();
+    this.anElStop();
+    const isAudio = !!(item && item.kind !== 'video');
+    this.bars.forEach(function (r) { r.setVisible(isAudio); r.clear(); r.setFake(false); });
+  };
+
+  Spectrum.prototype.levelClear = function () {
+    this.levels = new Array(VIZ_N).fill(0);
+    this.bars.forEach(function (r) { r.clear(); });
+  };
+
+  Spectrum.prototype.anElStop = function () {
+    if (this.anEl) {
+      try { this.anEl.pause(); } catch (e) {}
+    }
+  };
+
+  Spectrum.prototype.stop = function () {
+    this.playing = false;
+    if (this.raf) { cancelAnimationFrame(this.raf); this.raf = 0; }
+    this.bars.forEach(function (r) { r.setPlaying(false); });
+  };
+
+  Spectrum.prototype.pause = function () {
+    this.stop();
+    this.anElStop();
+    this.levelClear();
+  };
+
+  Spectrum.prototype.toFake = function () {
+    this.mode = 'fake';
+    this.anElStop();
+    this.levelClear();
+    const playing = this.playing;
+    this.bars.forEach(function (r) {
+      r.setFake(true);
+      r.setPlaying(playing);
+    });
+  };
+
+  Spectrum.prototype.start = function () {
     const item = this.player.item;
     if (!item || item.kind === 'video') return;
     this.playing = true;
-    this.el.hidden = false;
 
     if (canAnalyze(item.url) && this.ensureGraph()) {
       if (this.ctx.state === 'suspended' && this.ctx.resume) {
@@ -318,28 +359,25 @@
         if (p && p.catch) p.catch(function () {});
       } catch (e) {}
       this.mode = 'real';
-      this.el.classList.remove('is-fake');
-      this.el.classList.remove('is-playing');
+      this.bars.forEach(function (r) {
+        r.setFake(false);
+        r.setPlaying(true);
+        r.setVisible(true);
+      });
       this.silent = 0;
       this.loop();
       return;
     }
-    this.toFake();
+    // 跨域 / 无 WebAudio：装饰动画，节奏仍跟播放状态走
+    this.mode = 'fake';
+    this.bars.forEach(function (r) {
+      r.setFake(true);
+      r.setPlaying(true);
+      r.setVisible(true);
+    });
   };
 
-  Viz.prototype.pause = function () {
-    this.playing = false;
-    if (this.raf) { cancelAnimationFrame(this.raf); this.raf = 0; }
-    this.el.classList.remove('is-playing');
-    this.anElStop();
-    // 停在当前高度然后自然回落
-    for (let i = 0; i < this.n; i++) {
-      this.levels[i] = 0;
-      if (this.bars[i]) this.bars[i].style.height = '6%';
-    }
-  };
-
-  Viz.prototype.loop = function () {
+  Spectrum.prototype.loop = function () {
     const self = this;
     const step = function () {
       if (!self.playing || self.mode !== 'real') return;
@@ -349,21 +387,19 @@
       an.getByteFrequencyData(self.data);
       const bins = self.data.length;
       let peak = 0;
-      for (let i = 0; i < self.n; i++) {
+      for (let i = 0; i < VIZ_N; i++) {
         // 低频占更多格子（人耳对低频更敏感，视觉上也更像频谱）
-        const lo = Math.floor(Math.pow(i / self.n, 1.7) * bins);
-        const hi = Math.min(bins, Math.max(lo + 1, Math.floor(Math.pow((i + 1) / self.n, 1.7) * bins)));
+        const lo = Math.floor(Math.pow(i / VIZ_N, 1.7) * bins);
+        const hi = Math.min(bins, Math.max(lo + 1, Math.floor(Math.pow((i + 1) / VIZ_N, 1.7) * bins)));
         let sum = 0, c = 0;
         for (let j = lo; j < hi; j++) { sum += self.data[j]; c++; }
         let v = c ? sum / c / 255 : 0;
         v = Math.pow(v, 0.8);
         if (v > peak) peak = v;
         const prev = self.levels[i];
-        const cur = v > prev ? v : prev * 0.86;
-        self.levels[i] = cur;
-        const h = Math.max(6, Math.min(100, cur * 100));
-        self.bars[i].style.height = h.toFixed(1) + '%';
+        self.levels[i] = v > prev ? v : prev * 0.86; // 上升快、下落慢
       }
+      self.bars.forEach(function (r) { r.draw(self.levels); });
       // 连续 5 秒完全没有信号（多半是解码拿不到数据），退回装饰动画
       if (peak < 0.004) {
         if (++self.silent > 300) self.toFake();
@@ -374,14 +410,19 @@
     step();
   };
 
-  Player.prototype.setupViz = function (el) {
-    if (!el) return;
+  /* 把频谱接到若干容器上：main 是播放页大条带，mini 是最小化时的迷你条 */
+  Player.prototype.setupViz = function (mainEl, miniEl) {
+    if (!mainEl) return;
     const self = this;
-    this.viz = new Viz(el, this);
-    this.on('load', function (item) { self.viz.reset(item); });
-    this.on('playstate', function (playing) { if (playing) self.viz.start(); else self.viz.pause(); });
-    this.on('ended', function () { self.viz.pause(); });
+    this.spectrum = new Spectrum(this);
+    const main = this.spectrum.attach(new Bars(mainEl, 48));
+    const mini = miniEl ? this.spectrum.attach(new Bars(miniEl, 12)) : null;
+    this.on('load', function (item) { self.spectrum.reset(item); });
+    this.on('playstate', function (playing) { if (playing) self.spectrum.start(); else self.spectrum.pause(); });
+    this.on('ended', function () { self.spectrum.pause(); });
+    return { main: main, mini: mini };
   };
 
-  M.Viz = Viz;
+  M.Viz = Spectrum;
+  M.Bars = Bars;
 })(window);
