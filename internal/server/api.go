@@ -236,6 +236,15 @@ func (s *Server) handleLibrary(w http.ResponseWriter, r *http.Request) {
 			if e.LyricSource != "" {
 				continue
 			}
+		case "pending":
+			// 「待配歌词」：音频、没歌词、也还没有「无歌词」结论（纯音乐不算待配）。
+			if e.Kind != "audio" || e.LyricSource != "" || e.NoLyric != "" {
+				continue
+			}
+		case "instrumental":
+			if e.NoLyric == "" {
+				continue
+			}
 		}
 		if q != "" && !strings.Contains(strings.ToLower(e.Title+" "+e.Artist+" "+e.Album+" "+e.Name+" "+e.Path), q) {
 			continue

@@ -54,16 +54,33 @@
       </div>
     </div>
 
+    <div class="stat-tiles" id="lib-tiles" role="group" aria-label="曲库概览与筛选">
+      <button class="tile is-on" type="button" data-filter="all">
+        <b id="st-total">–</b>
+        <span>全部<em>总音视频</em></span>
+      </button>
+      <button class="tile" type="button" data-filter="audio">
+        <b id="st-audio">–</b>
+        <span>音频<em>总音频</em></span>
+      </button>
+      <button class="tile" type="button" data-filter="lyric">
+        <b id="st-lyric">–</b>
+        <span>有歌词<em>音频带词</em></span>
+      </button>
+      <button class="tile" type="button" data-filter="pending">
+        <b id="st-pending">–</b>
+        <span>待配歌词<em>音频缺词</em></span>
+      </button>
+    </div>
+
     <div class="toolbar">
-      <div class="chips" id="lib-filters" role="group" aria-label="筛选">
-        <button class="chip is-on" data-filter="all" type="button">全部</button>
-        <button class="chip" data-filter="audio" type="button">音频</button>
+      <div class="chips" id="lib-filters" role="group" aria-label="更多筛选">
         <button class="chip" data-filter="video" type="button">视频</button>
-        <button class="chip" data-filter="lyric" type="button">有歌词</button>
-        <button class="chip" data-filter="nolyric" type="button">待配歌词</button>
+        <button class="chip" data-filter="instrumental" type="button">纯音乐</button>
+        <button class="chip" data-filter="nolyric" type="button">全部缺词</button>
       </div>
       <div class="toolbar-right">
-        <span class="tag cache-tag" id="cache-chip" hidden></span>
+        <span class="cache-tag" id="cache-chip" hidden></span>
         <label class="sr-only" for="lib-sort">排序</label>
         <select id="lib-sort" class="select">
           <option value="title">按标题</option>
@@ -115,7 +132,6 @@
             <div class="art-glow" id="art-glow"></div>
             <div class="art-inner" id="art-inner">
               <div class="art-letter" id="art-letter">♪</div>
-              <div class="bars" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></div>
             </div>
             <div class="art-caption">
               <div class="art-title" id="art-title"></div>
@@ -131,11 +147,26 @@
           <div class="stage-msg" id="stage-msg" hidden></div>
         </div>
 
+        <!-- 音频可视化：跟随真实音频频谱跳动（不可分析时退回装饰动画），视频播放时隐藏 -->
+        <div class="viz" id="viz" hidden aria-hidden="true"></div>
+
         <div class="player-bar">
+          <div class="now-lyric" id="now-lyric" hidden>
+            <span class="nl-mark" aria-hidden="true">♪</span>
+            <span class="nl-text" id="nl-text"></span>
+            <span class="nl-trans" id="nl-trans"></span>
+          </div>
           <div class="seek-row">
             <span class="time" id="t-cur">0:00</span>
             <input type="range" class="seek" id="seek" min="0" max="1000" value="0" step="1" aria-label="播放进度">
             <span class="time" id="t-dur">0:00</span>
+            <div class="vol-inline">
+              <button class="vol-mute" id="btn-mute" type="button" aria-label="静音" title="静音 / 取消静音（M）">
+                <svg viewBox="0 0 24 24" id="ico-vol"><path d="M4 9h4l5-4v14l-5-4H4z"/><path d="M17 8a6 6 0 0 1 0 8"/></svg>
+              </button>
+              <input type="range" id="volume" min="0" max="100" value="80" aria-label="音量" title="音量">
+              <span class="vol-num" id="vol-num">80%</span>
+            </div>
           </div>
           <div class="btns">
             <button class="ico" id="btn-prev" type="button" aria-label="上一首" title="上一首">
@@ -154,10 +185,6 @@
               <svg viewBox="0 0 24 24"><path d="M17 5v14M4 6v12l11-6z"/></svg>
             </button>
             <span class="btn-gap"></span>
-            <div class="volume">
-              <svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9h4l5-4v14l-5-4H4z"/><path d="M17 8a6 6 0 0 1 0 8"/></svg>
-              <input type="range" id="volume" min="0" max="100" value="80" aria-label="音量">
-            </div>
             <select id="rate" class="select tiny" aria-label="播放速度">
               <option value="0.75">0.75×</option>
               <option value="1" selected>1×</option>

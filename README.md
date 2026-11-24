@@ -26,6 +26,9 @@
 - 本地音视频：MP3/FLAC/M4A/AAC/OGG/OPUS/WAV/APE… 与 MP4/MKV/WEBM/MOV/AVI…
 - HTTP Range 流式（视频拖进度条、边下边播），封面从标签里取并缓存
 - 播放队列、上一/下一首、±10s、倍速、音量、全屏、迷你播放条
+- 音量常驻在进度条同一行（扬声器静音按钮 + 百分比），任何宽度都能调；`M` 静音、`↑/↓` 步进 5%
+- 进度条上方常驻**当前歌词条**：唱到哪句随时可见（含译文），前奏/间奏与纯音乐分别给说明；切到曲库页时迷你条也用这句代替歌手名
+- **音频可视化**：播放区下方一条频谱带，用 WebAudio `AnalyserNode` 读真实频谱（48 根竖条，低频占更多格子、峰值平滑衰减）；播放时封面/字号/背景光轻微呼吸
 - 直接把本地文件拖进页面播放（不写入曲库，同名 `.lrc/.srt` 一并识别）
 
 **歌词 / 字幕**
@@ -42,6 +45,7 @@
 - 输入一句歌词反查歌曲：本地歌词全文索引（可直接跳到那句的时间点）+ 网易云歌词检索（只要元信息）+ 歌词库名称匹配
 
 **曲库**
+- 顶部四个数字：**全部 / 音频 / 有歌词 / 待配歌词**，点一下就是筛选（口径见下面「曲库四个数字」）
 - 工具条「打开本地文件夹」：本机会弹**系统目录选择框**（macOS `choose folder` / Linux zenity·kdialog / Windows FolderBrowserDialog），选中的目录自动写进 `mediaDirs` 并立即扫描；已存在的目录不会重复添加
 - 没有图形会话的纯网页部署（systemd / 容器 / 远程）会自动退到浏览器目录选择：把这个文件夹里的音视频**临时**塞进播放队列，不写曲库（浏览器拿不到真实路径，不能替你去扫盘）
 - 单个文件仍然可以直接拖进窗口播放，不写曲库
@@ -170,12 +174,12 @@ CI 里 `urlbox` 是现场 `cargo build` 的（Linux 会装 webkit2gtk 依赖）�
 | --- | --- | --- |
 | GET | `/api/health`、`/api/version` | 健康检查、版本 |
 | GET/POST | `/api/config` | 配置读写（密钥只回布尔） |
-| GET | `/api/library?q=&kind=&filter=&sort=&limit=` | 曲库，`filter=lyric|nolyric`，`kind=audio|video`；条目里的 `noLyric` 表示「确认没有歌词（纯音乐）」 |
+| GET | `/api/library?q=&kind=&filter=&sort=&limit=` | 曲库，`filter=lyric|nolyric|pending|instrumental`，`kind=audio|video`；条目里的 `noLyric` 表示「确认没有歌词（纯音乐）」 |
 | POST | `/api/library/scan` | 重新扫描 |
 | POST | `/api/track/{id}/identify` | 单曲识别歌名（body `apply/audio/fetchLyrics`） |
 | POST | `/api/library/identify` | 批量识别未匹配曲目（body `limit/onlyMissing/apply`） |
 | POST | `/api/ai/check` | 探测 AI 端点是否可用 |
-| GET | `/api/track/{id}`、`/api/stats` | 单曲详情、统计 |
+| GET | `/api/track/{id}`、`/api/stats` | 单曲详情、统计（`total/audio/video/audioWithLyric/withLyric/noLyric/pending/bytes`） |
 | GET | `/api/lyric/{id}?force=1&pick=` | 取歌词（按优先级自动解析）；纯音乐返回 `{doc:{instrumental:true,note:"无歌词，纯音乐",cues:[]}}` |
 | POST | `/api/lyric/{id}?ext=.lrc` | 原始文本导入（body 为纯文本） |
 | GET | `/api/lyric/{id}/candidates` | LRCLIB 候选列表 |
@@ -273,6 +277,24 @@ CI 里 `urlbox` 是现场 `cargo build` 的（Linux 会装 webkit2gtk 依赖）�
 
 
 
+## 曲库四个数字与播放器界面（v1.4）
+
+| 数字 | 口径 | 点它就是 |
+| --- | --- | --- |
+| 全部 | 曲库里的音视频总数 | 不过滤 |
+| 音频 | `kind=audio` 的条数 | `kind=audio` |
+| 有歌词 | 音频里有歌词的条数（纯音乐结论不算有词） | `filter=lyric` |
+| 待配歌词 | 音频里既没歌词、也还没判成纯音乐的条数 | `filter=pending` |
+
+`GET /api/stats` 与 `/api/library` 返回的 `stats` 里是这些字段：`total / audio / video / audioWithLyric / withLyric / noLyric / pending / bytes`。其中 `withLyric` 是「含视频字幕」的总数，`audioWithLyric` 只算音频，界面上的「有歌词」用的是后者。
+工具条还有两个补充筛选：`纯音乐` = `filter=instrumental`（有 `noLyric` 结论的），`全部缺词` = `filter=nolyric`（没有 `lyricSource` 的，包含纯音乐）。
+
+**播放器**
+
+- **音量常驻**：滑杆和进度条在同一行，右边依次是静音按钮与百分比数字，`M` 静音、`↑/↓` 每次 5%，双击滑杆回 80%。窄到 390px 也不隐藏，只把滑杆收窄到 88px、隐藏百分比文字。
+- **当前歌词条**：进度条上方固定一行，显示当前唱到的歌词与译文；前奏/间奏显示 `♪ 前奏 / 间奏…`，纯音乐显示结论，没歌词显示「没有歌词」。切到曲库页时，迷你播放条也用这句代替歌手名。
+- **音频可视化**：播放区与播放条之间的一条频谱带（48 根竖条，低频占更多格子、峰值平滑衰减），播放时封面/字号/背景光轻微呼吸。真实频谱来自 WebAudio `AnalyserNode`；为了不牺牲播放兼容性，**不把主播放元素绑进 WebAudio**（跨域音源绑进去会被静音），而是用一只隐藏 `<audio>` 拉同一路流单独分析、输出增益 0（听不到第二次声音）。所以本地曲库是真实频谱，跨域在线音源 / 不支持 WebAudio / 连续 5 秒拿不到信号时自动退回装饰动画（节奏仍跟播放/暂停走）。视频播放时这条带子隐藏。
+
 ## 后台自动缓存歌词
 
 扫描完不再需要你一首首点开播放器才会拉歌词：
@@ -280,7 +302,7 @@ CI 里 `urlbox` 是现场 `cargo build` 的（Linux 会装 webkit2gtk 依赖）�
 - 曲库扫描成功 → 自动开始后台缓存（`Library.OnScanned` 挂钩）；服务启动时也会先跑一轮；设置里改了开关同样立即触发。
 - **异步、限并发**：独立 worker（4 并发 + LRCLIB 600ms / 酷狗 900ms 节流、429/503 退避重试），单曲超时 120s，走的是和播放同一条解析链路，不占播放请求、不影响听歌。
 - **只补缺的**：仅处理音频条目里「没有歌词、没有内嵌字幕、缓存未命中、也没判定过是纯音乐」的，其余跳过。
-- **边缓边显示**：每首命中立刻回填曲库（歌词角标 + 时长/歌名纠正），曲库页角标实时显示 `缓存歌词 3/12`。
+- **边缓边显示**：每首命中立刻回填曲库（歌词角标 + 时长/歌名纠正），曲库工具条角标是**圆环 + 百分比 + `3/12`**，鼠标悬停看命中/未找到/跳过的完整口径；跑完显示绿色环与命中率，4 秒后收起。
 - **失败会重试，但不是无限重试**：限流或网络失败留在待办里，下一轮（15 秒一次心跳）自动接着做；歌词库确认「纯音乐/无歌词」的直接出结论并移出待办。
 
 | 配置 / 接口 | 说明 |

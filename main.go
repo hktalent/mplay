@@ -33,7 +33,7 @@ import (
 )
 
 // version 可在构建时用 -ldflags "-X main.version=..." 覆盖。
-var version = "1.3.0"
+var version = "1.4.0"
 
 type stringList []string
 
