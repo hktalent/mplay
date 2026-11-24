@@ -23,6 +23,7 @@ build_one() {
     -trimpath -ldflags "-s -w -X main.version=$VERSION" \
     -o "$stage/mplay$ext" .
   cp README.md "$stage/README.md"
+  cp README.zh-CN.md "$stage/README.zh-CN.md"
 
   if [ "$os" = "windows" ]; then
     pkg="$DIST/$name.zip"
