@@ -57,7 +57,18 @@ A local-first audio/video player: scan your media folders → match lyrics and s
 **Page**
 - Header / footer are `position: fixed` and always visible; body and overlays reserve space via `--header-h / --footer-h` in real time
 - Footer links come from the single `site-links` data source (`python3 site-links/sync.py` generates it; never hand-edit `web/footer.js`)
+- English by default, Chinese optional (Settings → Language), `?lang=` link override — see "Language (v1.5)" below
 - Mobile: at 390px the header splits into two rows and the player bar wraps
+
+## Language (v1.5)
+
+The UI ships **English by default**, with Simplified Chinese available as an alternative — the same frontend, no separate build.
+
+- **Switch**: Settings → Language → `English` / `简体中文`. The choice is stored in `localStorage` and written to the server config (`language`), so other browsers and devices follow it.
+- **Link override**: `?lang=en` / `?lang=zh` wins over the stored choice — handy for sharing a Chinese or English entry link.
+- **Config field**: `language` = `en` (default) or `zh-CN`; `POST /api/config {"language":"zh-CN"}` flips it server-side.
+- **How it works**: `web/i18n.js` holds a 338-entry phrase table keyed by the Chinese source text; `T()` replaces the longest matching phrase when the language is English, `MPI.localizeDOM()` translates the static markup in `index.html` once at boot. Content (titles, artists, lyrics, file paths) is never translated — only interface copy.
+- **Server messages**: API errors are Chinese on the wire and pass through the same phrase table, so toasts and empty states come out English too.
 
 ## Quick start
 
@@ -169,6 +180,7 @@ Lyric-related settings:
 | `enableLRCLIB` | true | LRCLIB source toggle (Settings → "Lyrics & subtitles") |
 | `enableKugou` | true | Kugou source toggle (best coverage for Chinese internet singers and covers) |
 | `enableNeteaseSource` | false | NetEase source toggle (easily 405-rate-limited per IP, off by default) |
+| `language` | `en` | UI language: `en` or `zh-CN` |
 | `autoCacheLyrics` | true | Cache lyrics in the background after a scan |
 | `writeSidecar` | false | Write a same-name `.lrc` next to the media file on a hit (by default only the cache is written, your folders are untouched) |
 

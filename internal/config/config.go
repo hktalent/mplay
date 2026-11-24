@@ -88,7 +88,7 @@ func Default() *Config {
 		EnableNeteaseSource: false,
 		EnableNeteaseLyric:  true,
 		LRCLIBBase:          "https://lrclib.net",
-		Language:            "zh-CN",
+		Language:            "en",
 		Sources:             []Source{},
 		AutoCacheLyrics:     true,
 	}
@@ -205,7 +205,7 @@ func (c *Config) normalizeLocked() {
 		c.Addr = "127.0.0.1:8737"
 	}
 	if c.Language == "" {
-		c.Language = "zh-CN"
+		c.Language = "en"
 	}
 	if c.LRCLIBBase == "" {
 		c.LRCLIBBase = "https://lrclib.net"

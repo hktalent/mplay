@@ -56,7 +56,18 @@
 **页面**
 - 顶栏 / 底栏 `position: fixed` 始终可见，正文与浮层用 `--header-h / --footer-h` 实时留位
 - 底栏链接来自 `site-links` 单一数据源（`python3 site-links/sync.py` 生成，不手改 `web/footer.js`）
+- 默认英文、可切中文（设置 → 语言），也支持 `?lang=` 链接覆盖，见下面「语言（v1.5）」
 - 移动端适配：390px 宽度下顶栏分两行、播放条自动换行
+
+## 语言（v1.5）
+
+界面**默认英文**，中文作为可选语言保留，同一份前端、不需要单独构建。
+
+- **切换**：设置 → 语言 → `English` / `简体中文`。选择存在 `localStorage`，同时写进服务端配置（`language`），换浏览器/换设备也跟着走。
+- **链接覆盖**：`?lang=en` / `?lang=zh` 优先于本地选择，方便把中文或英文的入口链接发给别人。
+- **配置字段**：`language` = `en`（默认）或 `zh-CN`；`POST /api/config {"language":"zh-CN"}` 可改服务端默认。
+- **实现**：`web/i18n.js` 是一张以「中文原文」为 key 的短语表（338 条），英文时 `T()` 按最长短语替换；`index.html` 的静态文案在启动时由 `MPI.localizeDOM()` 统一翻译一遍。**内容不翻译**：歌名、歌手、歌词、路径原样保留，只有界面文案走词表。
+- **服务器消息**：接口错误在传输上仍是中文，前端用同一张短语表转成英文，所以 toast 和空状态也是英文。
 
 ## 快速开始
 
@@ -168,6 +179,7 @@ CI 里 `urlbox` 是现场 `cargo build` 的（Linux 会装 webkit2gtk 依赖）�
 | `enableLRCLIB` | true | LRCLIB 源开关（设置页「歌词与字幕」） |
 | `enableKugou` | true | 酷狗源开关（华语网络歌手/翻唱覆盖最好） |
 | `enableNeteaseSource` | false | 网易云源开关（本机 IP 易被 405 限流，默认关） |
+| `language` | `en` | 界面语言：`en` 或 `zh-CN` |
 | `autoCacheLyrics` | true | 扫描后自动后台补歌词 |
 | `writeSidecar` | false | 命中后是否把歌词写成同名 `.lrc`（默认只写缓存，不动你的目录） |
 

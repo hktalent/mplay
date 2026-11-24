@@ -246,6 +246,20 @@
     <div class="cards">
       <section class="card">
         <header class="card-head">
+          <h2 id="lang-title">语言</h2>
+          <span class="tag">i18n</span>
+        </header>
+        <p class="card-desc" id="lang-desc">默认英文。切换后立即生效，中文作为可选语言保留。</p>
+        <div class="row">
+          <select id="lang-select" class="select" aria-label="Language">
+            <option value="en">English</option>
+            <option value="zh">简体中文</option>
+          </select>
+        </div>
+      </section>
+
+      <section class="card">
+        <header class="card-head">
           <h2>媒体目录</h2>
           <span class="tag" id="tag-dirs"></span>
         </header>
@@ -420,6 +434,7 @@
 </div>
 
 <script src="/footer.js?v=20261123b"></script>
+<script src="/i18n.js"></script>
 <script src="/lyrics.js"></script>
 <script src="/player.js"></script>
 <script src="/app.js"></script>

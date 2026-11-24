@@ -271,7 +271,7 @@
     const box = document.createElement('div');
     box.className = 'lyric-empty';
     const p1 = document.createElement('p');
-    p1.textContent = title || '还没有歌词';
+    p1.textContent = title || T('还没有歌词');
     const p2 = document.createElement('p');
     p2.className = 'tiny';
     p2.textContent = desc || '';

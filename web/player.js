@@ -69,13 +69,13 @@
   Player.prototype.errorText = function () {
     const el = this.el;
     const err = el.error;
-    if (!err) return '播放失败';
+    if (!err) return T('播放失败');
     switch (err.code) {
-      case 1: return '播放被中断';
-      case 2: return '读取源时出错（网络或地址不可用）';
-      case 3: return '解码失败，可能是这个格式当前浏览器/内核不支持';
-      case 4: return '格式不支持或文件不可访问（试试换 .mp3/.m4a/.mp4）';
-      default: return '播放失败';
+      case 1: return T('播放被中断');
+      case 2: return T('读取源时出错（网络或地址不可用）');
+      case 3: return T('解码失败，可能是这个格式当前浏览器/内核不支持');
+      case 4: return T('格式不支持或文件不可访问（试试换 .mp3/.m4a/.mp4）');
+      default: return T('播放失败');
     }
   };
 
