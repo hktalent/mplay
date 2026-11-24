@@ -277,6 +277,7 @@
   }
 
   function lyricBadge(e) {
+    if (e.noLyric) return '<span class="badge none">' + esc(e.noLyric) + '</span>';
     if (!e.lyricSource) return '<span class="badge none">待配词</span>';
     if (e.synced && e.cueCount) return '<span class="badge lyric">同步 ' + e.cueCount + ' 行</span>';
     if (e.lyricSource === 'sidecar' || e.lyricSource === 'tag') return '<span class="badge lyric">本地词</span>';
@@ -507,6 +508,16 @@
 
   function applyLyric(data, item) {
     const doc = (data && data.doc) || null;
+    if (doc && doc.instrumental) {
+      // 歌词库确认是纯音乐：不再显示「没找到歌词」，直接说清楚，也别让人反复点重试
+      S.doc = null;
+      const note = doc.note || '无歌词，纯音乐';
+      LV.empty(note, '这首歌没有歌词（纯音乐）。需要的话可以点「导入」自己放一份 .lrc。');
+      $('lyric-source').textContent = note;
+      $('lyric-count').textContent = '';
+      renderBadges(item, null, '');
+      return;
+    }
     if (!doc || !doc.cues || !doc.cues.length) {
       S.doc = null;
       LV.empty('没找到歌词', '可以点「导入」放一份 .lrc/.srt，或点「选择」手动挑一份在线歌词。');

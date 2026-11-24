@@ -24,9 +24,9 @@ type PrecacheStats struct {
 	LastError  string `json:"lastError"`
 }
 
-// precacheWorkers 是后台并发度。LRCLIB 有人肉限流（客户端已节流到 250ms/次），
-// 2 个协程足够把一整库跑完，又不会把公共接口打挂。
-const precacheWorkers = 2
+// precacheWorkers 是后台并发度。客户端已经统一节流（LRCLIB 600ms、酷狗 900ms），
+// 4 个协程既能把整库跑完，又不会把公共接口打挂。
+const precacheWorkers = 4
 
 func (s *Server) precacheState() PrecacheStats {
 	s.preMu.Lock()
@@ -88,7 +88,10 @@ func (s *Server) pendingLyricEntries() []media.Entry {
 		if e.LyricSource != "" || e.CueCount > 0 {
 			continue // 同名歌词/内嵌歌词已经有了
 		}
-		if doc, err := s.o.Lyr.ReadCache(e.ID); err == nil && doc != nil && len(doc.Cues) > 0 {
+		if _, err := s.o.Lyr.ReadNoLyric(e.ID); err == nil {
+			continue // 已判定纯音乐/无歌词，别再问
+		}
+		if doc, err := s.o.Lyr.ReadCache(e.ID); err == nil && doc != nil {
 			continue // 远端缓存已命中
 		}
 		out = append(out, e)
@@ -115,7 +118,7 @@ func (s *Server) runPrecache(items []media.Entry) {
 			if !s.precacheAllowed() {
 				return
 			}
-			ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
+			ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 			defer cancel()
 			s.cacheOne(ctx, e)
 		}(e)
@@ -135,6 +138,13 @@ func (s *Server) cacheOne(ctx context.Context, e media.Entry) {
 	s.pre.LastItem = e.Name
 	s.preMu.Unlock()
 
+	skip := func() {
+		s.preMu.Lock()
+		s.pre.Skipped++
+		s.pre.Done++
+		s.preMu.Unlock()
+	}
+
 	done := func(hit bool) {
 		s.preMu.Lock()
 		if hit {
@@ -147,6 +157,12 @@ func (s *Server) cacheOne(ctx context.Context, e media.Entry) {
 	}
 
 	doc, err := s.resolveLyric(ctx, e, false, 0)
+	if doc != nil && doc.Instrumental {
+		// 纯音乐：不算命中，但也不必再重试；顺手把结论写进曲库给界面用。
+		s.o.Lib.MarkNoLyric(e.ID, doc.Note)
+		skip()
+		return
+	}
 	if err != nil || doc == nil || len(doc.Cues) == 0 {
 		if err != nil && ctx.Err() == nil {
 			s.preMu.Lock()

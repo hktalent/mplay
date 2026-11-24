@@ -22,6 +22,8 @@ var junkSegments = []string{
 	"320k", "128k", "192k", "256k", "64k", "flac", "ape", "wav", "hires", "hi-res", "hq", "hd",
 	"mp3", "m4a", "aac", "ogg", "mp4", "mkv",
 	"无损", "高清", "超清", "标清", "高音质", "原声", "原版", "正式版", "完整版", "官方版",
+	"10倍音质", "9倍音质", "8倍音质", "倍音质", "音质", "母带", "臻品", "全景声", "杜比", "环绕",
+	"重低音", "hifi", "dsd", "sacd", "24bit", "96khz", "试音", "发烧", "车载", "热歌", "排行榜", "抖音", "快手",
 	"伴奏", "纯音乐", "铃声", "试听", "下载", "免费", "更多", "关注", "公众号",
 	"中文字幕", "中英双语", "双语字幕", "字幕", "片段", "剪辑",
 	"live", "remix", "dj", "mv", "official", "audio", "lyrics", "instrumental",
@@ -35,11 +37,18 @@ var siteTokens = []string{
 }
 
 // 不带括号、直接用 -/_/空格 当分隔挂在名字上的噪音（"陈奕迅_十年_320k"）。
-var junkTokenRe = regexp.MustCompile(`(?i)(^|[\s\-_—–\|、,，])(320k|192k|128k|256k|64k|flac|ape|wav|hires|hi-?res|hq|hd|4k|1080p|720p|mp3|m4a|aac|ogg|无损|高清|超清|标清|高音质|完整版|官方版|正式版|原版|伴奏|纯音乐|铃声|试听|下载|免费|mv|remix|dj版)([\s\-_—–\|、,，.。]|$)`)
+var junkTokenRe = regexp.MustCompile(`(?i)(^|[\s\-_—–\|、,，])(10倍音质|9倍音质|8倍音质|倍音质|音质|母带|臻品|全景声|杜比|环绕|重低音|hifi|dsd|sacd|24bit|96khz|试音|发烧|车载|热歌|排行榜|抖音|快手|320k|192k|128k|256k|64k|flac|ape|wav|hires|hi-?res|hq|hd|4k|1080p|720p|mp3|m4a|aac|ogg|无损|高清|超清|标清|高音质|完整版|官方版|正式版|原版|伴奏|纯音乐|铃声|试听|下载|免费|mv|remix|dj版)([\s\-_—–\|、,，.。]|$)`)
 
 var (
-	bracketRe   = regexp.MustCompile(`[\[\(（【{<][^\]\)）】}>]*[\]\)）】}>]`)
-	leadNoRe    = regexp.MustCompile(`^\s*(?:[\(\[]?\d{1,3}[\)\]]?\s*[\.、\-\_\)）]\s*|\d{1,3}\s+)`)
+	bracketRe = regexp.MustCompile(`[\[\(（【{<][^\]\)）】}>]*[\]\)）】}>]`)
+	// 序号：点号/顿号允许 1~4 位（"3374.月照山居"）；连字符只吃 1~2 位，
+	// 否则 "9420-麦小兜" 里的歌名 9420 会被当成序号删掉。
+	leadNoRe = regexp.MustCompile(`^\s*(?:\d{1,4}\s*[\.、]\s*|\(?\d{1,2}\)?\s*[\-\_）]\s*|\d{1,3}\s+)`)
+	// "037刘至佳" 这种数字直接粘着中文的序号：只吃 1~3 位且后面紧跟汉字，别吃掉 "98k" 这类歌名。
+	leadNoCJKRe = regexp.MustCompile(`^\s*\d{1,3}([\p{Han}])`)
+	// "067LBI利比" 这种「序号+英文艺名+中文」：序号粘着 >=2 个字母时才剥，
+	// 避免把 "98k-i先生" 里的歌名 98k 拆坏。
+	leadNoEnRe  = regexp.MustCompile(`^\s*\d{1,3}([A-Za-z]{2,}[\p{Han}])`)
 	multiSpace  = regexp.MustCompile(`[\t ]{2,}`)
 	urlHeadRe   = regexp.MustCompile(`(?i)^\s*[\[\{\(【]?(?:www\.|http)[^\]\}\)】]*[\]\}\)】]?\s*[-_— ]*`)
 	trailingTag = regexp.MustCompile(`(?i)\s*[-_]\s*(?:mp3|flac|ape|wav|m4a)\s*$`)
@@ -77,6 +86,8 @@ func CleanName(name string) string {
 		base = nb
 	}
 	base = leadNoRe.ReplaceAllString(base, "")
+	base = leadNoCJKRe.ReplaceAllString(base, "$1")
+	base = leadNoEnRe.ReplaceAllString(base, "$1")
 	base = featRe.ReplaceAllString(base, "$1 ")
 	base = strings.ReplaceAll(base, "_", " - ")
 	base = strings.ReplaceAll(base, "\u00a0", " ")
@@ -195,12 +206,12 @@ func splitPairs(clean string) [][2]string {
 	}
 	// 裸连字符（周杰伦-稻香、04.王菲-红豆）：只在两侧都有中日韩文字时拆，
 	// 否则 "Taylor-Swift" 这种会被拆坏。
-	if len(out) == 0 {
-		if i := strings.Index(clean, "-"); i > 0 && i < len(clean)-1 {
-			l, r := clean[:i], clean[i+1:]
-			if hasCJK(l) && hasCJK(r) {
-				add(l, r)
-			}
+	if i := strings.Index(clean, "-"); i > 0 && i < len(clean)-1 {
+		l, r := clean[:i], clean[i+1:]
+		// 有一侧是中日韩文字，或者两侧都是「多词」的（Love Story-Taylor Swift），就拆；
+		// 单单词的 Taylor-Swift / Ma-direction 这种才当连字符不拆。
+		if hasCJK(l) || hasCJK(r) || (strings.Contains(l, " ") && strings.Contains(r, " ")) {
+			add(l, r)
 		}
 	}
 	// 没有明显分隔符时，用空格切分：最后一段当艺人 / 第一段当艺人
@@ -280,14 +291,63 @@ func GuessNames(name string) []Guess {
 	return out
 }
 
+// 标签里常见的站点垃圾：有的资源站会把「小高网分享xgw5.com」塞进 artist。
+var tagJunkTokens = []string{"http", "www.", ".com", ".cn", ".net", ".org", ".xyz", ".vip", "网盘", "分享", "下载", "整理", "资源站", "公众号",
+	"酷狗", "酷我", "qq音乐", "网易云", "咪咕", "虾米", "kuwo", "kugou", "qqmusic", "xiami", "music.163", "bilibili", "douyin"}
+
+// tagValueJunk 判断一个标签值是不是资源站的垃圾（而不是真的歌名/艺人）。
+func tagValueJunk(s string) bool {
+	low := strings.ToLower(strings.TrimSpace(s))
+	if low == "" {
+		return true
+	}
+	for _, t := range tagJunkTokens {
+		if strings.Contains(low, t) {
+			return true
+		}
+	}
+	return false
+}
+
 // GuessWithTags 优先用内嵌标签，标签不全时补文件名候选。
 // tags 里只有歌名没艺人时，把文件名里最像艺人的一段补上。
 func GuessWithTags(name, tagTitle, tagArtist string) []Guess {
 	tagTitle = strings.TrimSpace(tagTitle)
 	tagArtist = strings.TrimSpace(tagArtist)
+	// 标签也可能是资源站塞的垃圾（artist="小高网分享xgw5.com"），这种不能当真值，
+	// 否则会把从文件名里猜对的写法顶掉。
+	if tagValueJunk(tagTitle) {
+		tagTitle = ""
+	}
+	if tagValueJunk(tagArtist) {
+		tagArtist = ""
+	}
+	// 标签值本身也常带噪音（"8.潇湘水云"、"2、相思（live）"），按文件名同一套规则洗一遍。
+	if tagTitle != "" {
+		if c := CleanName(tagTitle); c != "" {
+			tagTitle = c
+		}
+	}
+	if tagArtist != "" {
+		if c := CleanName(tagArtist); c != "" {
+			tagArtist = c
+		}
+	}
 	var out []Guess
 	if tagTitle != "" && tagArtist != "" {
-		return []Guess{{Title: tagTitle, Artist: tagArtist, Source: "tag"}}
+		// 标签也不能全信：资源站批量转码时经常把歌名和艺人写反、或者写成 "Love Story-Taylor"/"Swift"。
+		// 所以标签只作为「第一顺位候选」，文件名拆出来的写法继续排在后面，让歌词库去裁决。
+		out := []Guess{{Title: tagTitle, Artist: tagArtist, Source: "tag"}}
+		for _, g := range GuessNames(name) {
+			if NormalizeKey(g.Title) == NormalizeKey(tagTitle) && NormalizeKey(g.Artist) == NormalizeKey(tagArtist) {
+				continue
+			}
+			out = append(out, g)
+		}
+		if len(out) > 10 {
+			out = out[:10]
+		}
+		return out
 	}
 	nameGuesses := GuessNames(name)
 	if tagTitle != "" {

@@ -97,6 +97,12 @@ func variantsFor(e media.Entry) []lyrics.Variant {
 	hasRealTags := e.MetaSource != "" && !strings.Contains(e.MetaSource, "filename") && e.MetaSource != "ai"
 	if hasRealTags && (e.Title != "" || e.Artist != "") {
 		out = append(out, lyrics.Variant{Title: e.Title, Artist: e.Artist, Source: "tag", Library: true})
+		// 标签本身常带噪音（"2、相思（live）"、artist="小高网分享xgw5.com"），
+		// 再补一条洗干净的同义写法，让歌词库去裁决哪个能用。
+		ct, ca := media.CleanName(e.Title), media.CleanName(e.Artist)
+		if ct != "" || ca != "" {
+			out = append(out, lyrics.Variant{Title: ct, Artist: ca, Source: "tag-clean", Library: true})
+		}
 	}
 	for _, g := range media.GuessNames(e.Name) {
 		out = append(out, lyrics.Variant{Title: g.Title, Artist: g.Artist, Source: g.Source})

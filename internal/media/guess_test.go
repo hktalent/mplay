@@ -105,11 +105,11 @@ func TestGuessNamesHasReversed(t *testing.T) {
 	}
 }
 
-// 标签优先；只有艺人时用标签艺人配文件名里的歌名段。
+// 标签优先（排第一），但文件名候选要继续跟着——标签本身也可能是脏的。
 func TestGuessWithTags(t *testing.T) {
 	gs := GuessWithTags("01. 夜空中最亮的星 - 逃跑计划 [320k].mp3", "夜空中最亮的星", "逃跑计划")
-	if len(gs) != 1 || gs[0].Title != "夜空中最亮的星" || gs[0].Artist != "逃跑计划" || gs[0].Source != "tag" {
-		t.Fatalf("标签完整时应只用标签: %+v", gs)
+	if len(gs) == 0 || gs[0].Title != "夜空中最亮的星" || gs[0].Artist != "逃跑计划" || gs[0].Source != "tag" {
+		t.Fatalf("标签完整时第一条必须是标签: %+v", gs)
 	}
 	gs = GuessWithTags("01. 夜空中最亮的星 - 逃跑计划.mp3", "", "逃跑计划")
 	if len(gs) == 0 || gs[0].Artist != "逃跑计划" {

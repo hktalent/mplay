@@ -18,6 +18,15 @@ import (
 	"unicode/utf8"
 )
 
+// traceOn 打开后（MPLAY_TRACE=1）把每一步的耗时打到 stderr，用于排查慢点。
+func traceOn() bool { return os.Getenv("MPLAY_TRACE") == "1" }
+
+func tracef(format string, args ...any) {
+	if traceOn() {
+		fmt.Fprintf(os.Stderr, "[mplay] "+format+"\n", args...)
+	}
+}
+
 // ErrNotFound 表示远端确实没有可用歌词（不是网络错误）。
 var ErrNotFound = errors.New("未找到匹配的歌词")
 
@@ -33,6 +42,11 @@ type Record struct {
 	PlainLyrics  string  `json:"plainLyrics"`
 	SyncedLyrics string  `json:"syncedLyrics"`
 
+	// Source 记录这条记录来自哪个源：lrclib / kugou / netease。空值按 lrclib 处理。
+	Source string `json:"-"`
+	// Hash 是酷狗的文件 hash（取歌词要用），别的源为空。
+	Hash string `json:"-"`
+
 	Score float64 `json:"-"`
 }
 
@@ -44,10 +58,28 @@ type Client struct {
 	Base     string
 	CacheDir string
 	Enabled  bool
-	HTTP     *http.Client
+	// Netease 打开后，LRCLIB 没结果时会用网易云兜底（中文曲库更全）。
+	Netease bool
+	// NeteaseBase 一般留空（走官方域名），测试时指向假服务。
+	NeteaseBase string
+	// Kugou 打开后，LRCLIB 没结果时用酷狗兜底（华语曲库最全）。
+	Kugou bool
+	// KugouBase 一般留空（走官方域名），测试时指向假服务。
+	KugouBase string
+	kgMu      sync.Mutex
+	kgLast    time.Time
+	HTTP      *http.Client
 
 	mu   sync.Mutex
 	last time.Time
+	// sem 限制同时在飞的请求数——多 worker + 多候选并发时，
+	// 不加限制会被歌词库判成洪水（LRCLIB 429 / 网易云 405）。
+	sem chan struct{}
+
+	// 网易云有自己的节流与冷却（频控比 LRCLIB 严）
+	netMu   sync.Mutex
+	netLast time.Time
+	netCool time.Time
 }
 
 // NewClient 创建客户端。base 为空时用官方地址。
@@ -56,23 +88,51 @@ func NewClient(base, cacheDir string, enabled bool) *Client {
 		base = "https://lrclib.net"
 	}
 	return &Client{
+		sem:      make(chan struct{}, 6),
 		Base:     strings.TrimRight(base, "/"),
 		CacheDir: cacheDir,
 		Enabled:  enabled,
 		HTTP: &http.Client{
-			Timeout: 12 * time.Second,
+			Timeout: 15 * time.Second,
 			Transport: &http.Transport{
 				Proxy:                 http.ProxyFromEnvironment,
 				MaxIdleConns:          20,
 				IdleConnTimeout:       60 * time.Second,
 				TLSHandshakeTimeout:   10 * time.Second,
-				ResponseHeaderTimeout: 12 * time.Second,
+				ResponseHeaderTimeout: 8 * time.Second,
 			},
 		},
 	}
 }
 
+func (c *Client) acquire(ctx context.Context) error {
+	if c.sem == nil {
+		return nil
+	}
+	select {
+	case c.sem <- struct{}{}:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (c *Client) release() {
+	if c.sem != nil {
+		<-c.sem
+	}
+}
+
 func (c *Client) get(ctx context.Context, path string, q url.Values, out any) error {
+	if err := c.acquire(ctx); err != nil {
+		return err
+	}
+	defer c.release()
+	if traceOn() {
+		defer func(t time.Time) {
+			tracef("lrclib %s %v", q.Encode(), time.Since(t).Round(time.Millisecond))
+		}(time.Now())
+	}
 	// LRCLIB 有人肉限流约 1 请求/秒；这里做一点客户端侧节流，避免批量补歌词被封。
 	c.throttle()
 	u := c.Base + path
@@ -307,20 +367,24 @@ func (c *Client) Resolve(ctx context.Context, key, title, artist, album string, 
 
 // DocFromRecord 把记录转成统一 cue 模型。带时间轴优先；只有纯文本时也返回，让用户至少能看到字。
 func DocFromRecord(r Record) *Doc {
+	src := r.Source
+	if src == "" {
+		src = "lrclib"
+	}
 	doc := &Doc{
 		Title:    r.TrackName,
 		Artist:   r.ArtistName,
 		Album:    r.AlbumName,
 		Duration: r.Duration,
 		LRCLIBID: r.ID,
-		Meta:     map[string]string{"lrclib": "1"},
+		Meta:     map[string]string{src: "1"},
 	}
 	if r.HasSynced() {
 		if d := ParseLRC(r.SyncedLyrics); d != nil && len(d.Cues) > 0 {
 			d.Title, d.Artist, d.Album = r.TrackName, r.ArtistName, r.AlbumName
 			d.Duration = r.Duration
 			d.LRCLIBID = r.ID
-			d.Source = "lrclib"
+			d.Source = src
 			d.Format = "lrc"
 			d.Synced = true
 			return d
@@ -331,12 +395,12 @@ func DocFromRecord(r Record) *Doc {
 		d.Title, d.Artist, d.Album = r.TrackName, r.ArtistName, r.AlbumName
 		d.Duration = r.Duration
 		d.LRCLIBID = r.ID
-		d.Source = "lrclib"
+		d.Source = src
 		d.Format = "txt"
 		d.Synced = false
 		return d
 	}
-	doc.Source = "lrclib"
+	doc.Source = src
 	doc.Format = "txt"
 	doc.Synced = false
 	return doc

@@ -49,10 +49,16 @@ type Entry struct {
 	TagLyrics   bool      `json:"tagLyrics,omitempty"`
 	Sidecars    []Sidecar `json:"sidecars,omitempty"`
 	LyricSource string    `json:"lyricSource,omitempty"` // sidecar | tag | cache
-	Synced      bool      `json:"synced"`
-	CueCount    int       `json:"cueCount,omitempty"`
-	Bitrate     int       `json:"bitrate,omitempty"`
+	// NoLyric 是「确认没有歌词」时的说法（目前只有纯音乐），用于界面提示，
+	// 与 LyricSource 互斥：它不算“有歌词”。
+	NoLyric  string `json:"noLyric,omitempty"`
+	Synced   bool   `json:"synced"`
+	CueCount int    `json:"cueCount,omitempty"`
+	Bitrate  int    `json:"bitrate,omitempty"`
 }
+
+// noLyricNote 是界面里“确认没有歌词”的固定说法。
+const noLyricNote = "无歌词，纯音乐"
 
 var (
 	audioExts = map[string]bool{
@@ -220,6 +226,27 @@ func (l *Library) SaveIndex() error {
 // runScanSafely 给后台扫描兜一层 recover：worker 是常驻 goroutine，
 // 里面任何 panic（畸形媒体文件、第三方解析器越界）都会直接带走整个进程。
 // UpdateLyricInfo 在后台补到歌词后更新条目的歌词标记（只动索引，不重扫文件）。
+// MarkNoLyric 把条目标成「确认没有歌词（纯音乐）」，同时清掉歌词来源，
+// 免得它继续出现在「还没歌词、值得去问一遍」的待缓存列表里。
+func (l *Library) MarkNoLyric(id, note string) bool {
+	l.mu.Lock()
+	e, ok := l.entries[id]
+	if ok {
+		if note == "" {
+			note = noLyricNote
+		}
+		e.NoLyric = note
+		e.LyricSource = ""
+		e.CueCount = 0
+		e.Synced = false
+	}
+	l.mu.Unlock()
+	if ok {
+		_ = l.SaveIndex()
+	}
+	return ok
+}
+
 func (l *Library) UpdateLyricInfo(id, source string, synced bool, cues int) bool {
 	l.mu.Lock()
 	e, ok := l.entries[id]
@@ -498,7 +525,10 @@ func buildEntry(path string, prev *Entry, dirFiles []string, cacheDir string) *E
 		e.LyricSource = "tag"
 		e.Synced = true
 	default:
-		if _, err := os.Stat(filepath.Join(cacheDir, "lyrics", e.ID+".json")); err == nil {
+		// 先看「没有歌词」结论：纯音乐不该被当成有歌词，也不该反复去问歌词库。
+		if _, err := os.Stat(filepath.Join(cacheDir, "lyrics", e.ID+".nolyric.json")); err == nil {
+			e.NoLyric = noLyricNote
+		} else if _, err := os.Stat(filepath.Join(cacheDir, "lyrics", e.ID+".json")); err == nil {
 			e.LyricSource = "cache"
 			e.Synced = true
 		}

@@ -35,10 +35,12 @@ type Config struct {
 	WriteSidecar bool     `json:"writeSidecar"`
 	AllowLAN     bool     `json:"allowLan"`
 
-	EnableITunes       bool `json:"enableITunes"`
-	EnableArchive      bool `json:"enableArchive"`
-	EnableLRCLIB       bool `json:"enableLRCLIB"`
-	EnableNeteaseLyric bool `json:"enableNeteaseLyricSearch"`
+	EnableITunes        bool `json:"enableITunes"`
+	EnableArchive       bool `json:"enableArchive"`
+	EnableLRCLIB        bool `json:"enableLRCLIB"`
+	EnableKugou         bool `json:"enableKugou"`         // LRCLIB 没结果时用酷狗兜底（华语曲库最全）
+	EnableNeteaseSource bool `json:"enableNeteaseSource"` // 备用的网易云兜底（频控严，默认关）
+	EnableNeteaseLyric  bool `json:"enableNeteaseLyricSearch"`
 
 	LRCLIBBase      string `json:"lrclibBase"`
 	JamendoClientID string `json:"jamendoClientId"`
@@ -77,16 +79,18 @@ func (c *Config) Path() string { return c.path }
 // Default 生成一份默认配置：媒体目录只取真实存在的几个常见目录。
 func Default() *Config {
 	cfg := &Config{
-		Addr:               "127.0.0.1:8737",
-		MediaDirs:          defaultMediaDirs(),
-		EnableITunes:       true,
-		EnableArchive:      true,
-		EnableLRCLIB:       true,
-		EnableNeteaseLyric: true,
-		LRCLIBBase:         "https://lrclib.net",
-		Language:           "zh-CN",
-		Sources:            []Source{},
-		AutoCacheLyrics:    true,
+		Addr:                "127.0.0.1:8737",
+		MediaDirs:           defaultMediaDirs(),
+		EnableITunes:        true,
+		EnableArchive:       true,
+		EnableLRCLIB:        true,
+		EnableKugou:         true,
+		EnableNeteaseSource: false,
+		EnableNeteaseLyric:  true,
+		LRCLIBBase:          "https://lrclib.net",
+		Language:            "zh-CN",
+		Sources:             []Source{},
+		AutoCacheLyrics:     true,
 	}
 	cfg.path = filepath.Join(ConfigDir(), "config.json")
 	return cfg
