@@ -83,6 +83,7 @@ func New(o Options) *Server {
 	s.mux.HandleFunc("GET /api/search/lyrics", s.handleSearchLyrics)
 	s.mux.HandleFunc("GET /api/remote/lyric", s.handleRemoteLyric)
 	s.mux.HandleFunc("GET /api/sources", s.handleSources)
+	s.mux.HandleFunc("POST /api/pick/folder", s.handlePickFolder)
 	s.mux.HandleFunc("POST /api/open", s.handleOpen)
 	s.mux.HandleFunc("GET /api/stats", s.handleStats)
 	s.mux.HandleFunc("GET /api/cache/status", s.handleCacheStatus)

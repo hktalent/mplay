@@ -264,7 +264,7 @@
       $('lib-empty-title').textContent = S.q ? '没找到匹配的曲目' : '曲库还是空的';
       $('lib-empty-desc').textContent = S.q
         ? '换个关键词，或者到「搜索」里找在线音源。'
-        : '在设置里添加媒体目录后会自动扫描；也可以直接用「打开本地文件」。';
+        : '在设置里添加媒体目录后会自动扫描；也可以点「打开本地文件夹」直接选一个目录。';
       return;
     }
     $('lib-empty').hidden = true;
@@ -1356,9 +1356,57 @@
       }).catch(function (e) { toast(e.message, true); });
     });
 
-    const openFiles = function () { $('file-input').click(); };
-    $('btn-open-files').addEventListener('click', openFiles);
-    $('btn-open-files-2').addEventListener('click', openFiles);
+    // 打开本地文件夹：
+    //  - 有系统目录选择框（本机桌面/本机浏览器）：选目录 → 加进 mediaDirs → 立即扫描
+    //  - 纯网页（远程部署 / 无图形会话）：浏览器目录选择 → 只做临时播放，不写曲库
+    const addDirAndScan = function (dir) {
+      const dirs = ((S.config && S.config.mediaDirs) || []).slice();
+      const norm = function (p) { return String(p || '').replace(/\/+$/, ''); };
+      const exists = dirs.some(function (d) { return norm(d) === norm(dir); });
+      if (!exists) dirs.push(dir);
+      const done = function () {
+        api('/api/library/scan', { method: 'POST' }).then(function () {
+          toast('已加入曲库：' + dir + '，正在扫描…');
+          setTimeout(function () { loadLibrary().catch(function () {}); }, 1200);
+        }).catch(function (e) { toast(e.message, true); });
+        if (typeof renderSettingsDirs === 'function') renderSettingsDirs();
+      };
+      if (exists) { done(); return; }
+      api('/api/config', { method: 'POST', body: { mediaDirs: dirs } }).then(function (cfg) {
+        S.config = cfg;
+        if (typeof renderSettings === 'function') renderSettings();
+        done();
+      }).catch(function (e) { toast(e.message, true); });
+    };
+
+    const pickNativeFolder = function () {
+      api('/api/pick/folder', { method: 'POST' }).then(function (res) {
+        if (res && res.ok && res.path) {
+          addDirAndScan(res.path);
+          return;
+        }
+        if (res && res.error) toast(res.error, true);
+        // cancelled：用户自己取消的，安静退出
+      }).catch(function (e) { toast(e.message, true); });
+    };
+
+    const openFolder = function () {
+      if (S.config && S.config.canPickFolder) { pickNativeFolder(); return; }
+      $('folder-input').click();
+    };
+    $('btn-open-files').addEventListener('click', openFolder);
+    $('btn-open-files-2').addEventListener('click', openFolder);
+    $('folder-input').addEventListener('change', function () {
+      const files = Array.prototype.slice.call(this.files || []);
+      this.value = '';
+      const media = files.filter(function (f) {
+        const ext = extOf(f.name);
+        return AUDIO_EXT.indexOf(ext) >= 0 || VIDEO_EXT.indexOf(ext) >= 0;
+      });
+      if (!media.length) { toast('这个文件夹里没有可播放的音视频文件', true); return; }
+      acceptFiles(media);
+      toast('已从文件夹载入 ' + media.length + ' 个文件（临时播放，未加入曲库）');
+    });
     $('file-input').addEventListener('change', function () {
       acceptFiles(this.files);
       this.value = '';
