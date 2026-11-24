@@ -5,6 +5,7 @@
 [![ci](https://github.com/hktalent/mplay/actions/workflows/ci.yml/badge.svg)](https://github.com/hktalent/mplay/actions/workflows/ci.yml)
 [![release](https://github.com/hktalent/mplay/actions/workflows/release.yml/badge.svg)](https://github.com/hktalent/mplay/actions/workflows/release.yml)
 [![license](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+<img width="800" alt="image" src="https://github.com/user-attachments/assets/0f73b802-a12e-4760-b381-23d5f1f23710" />
 
 下载安装包：[Releases](https://github.com/hktalent/mplay/releases) —— macOS 通用（Intel + Apple Silicon）、Linux x64、Windows x64，解压即用。
 
