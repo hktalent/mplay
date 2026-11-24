@@ -41,6 +41,11 @@
 - 在线搜歌：Apple 试听（30s 官方预览）、Internet Archive（公有领域/CC 可完整播放）、Jamendo（可选）、**自定义音源插件**（一行 JSON 接自己的接口）
 - 输入一句歌词反查歌曲：本地歌词全文索引（可直接跳到那句的时间点）+ 网易云歌词检索（只要元信息）+ 歌词库名称匹配
 
+**曲库**
+- 工具条「打开本地文件夹」：本机会弹**系统目录选择框**（macOS `choose folder` / Linux zenity·kdialog / Windows FolderBrowserDialog），选中的目录自动写进 `mediaDirs` 并立即扫描；已存在的目录不会重复添加
+- 没有图形会话的纯网页部署（systemd / 容器 / 远程）会自动退到浏览器目录选择：把这个文件夹里的音视频**临时**塞进播放队列，不写曲库（浏览器拿不到真实路径，不能替你去扫盘）
+- 单个文件仍然可以直接拖进窗口播放，不写曲库
+
 **页面**
 - 顶栏 / 底栏 `position: fixed` 始终可见，正文与浮层用 `--header-h / --footer-h` 实时留位
 - 底栏链接来自 `site-links` 单一数据源（`python3 site-links/sync.py` 生成，不手改 `web/footer.js`）
@@ -115,7 +120,7 @@ CI 里 `urlbox` 是现场 `cargo build` 的（Linux 会装 webkit2gtk 依赖）�
 | 形态 | 平台 | 要求 |
 | --- | --- | --- |
 | 服务端 / 网页版 | macOS（Intel / Apple Silicon）、Linux amd64 / arm64、Windows amd64 | **单文件、零 CGO**，不需要 Go 运行时、不需要数据库；解压即跑 |
-| 桌面版 | macOS 通用包（`MPlay.app`）、Linux x64、Windows x64 | 多一个 `urlbox` 窗口外壳：Linux 需要系统 `webkit2gtk`（wry 依赖，Debian/Ubuntu 装 `libwebkit2gtk-4.1-0`），Windows 需要 WebView2 运行时（Win10/11 一般自带）；macOS 为 ad-hoc 签名，首次打开需右键 →「打开」 |
+| 桌面版 | macOS 通用包（`MPlay.app`）、Linux x64、Windows x64 | 「打开本地文件夹」用系统原生对话框：macOS `osascript`、Linux `zenity` 或 `kdialog`、Windows PowerShell；没有图形会话时前端自动退回浏览器目录选择。另需一个 `urlbox` 窗口外壳：Linux 需要系统 `webkit2gtk`（wry 依赖，Debian/Ubuntu 装 `libwebkit2gtk-4.1-0`），Windows 需要 WebView2 运行时（Win10/11 一般自带）；macOS 为 ad-hoc 签名，首次打开需右键 →「打开」 |
 | 浏览器访问 | Chrome / Edge / Firefox / Safari 的现代版本 | 播放依赖内核解码：`.mkv/.avi/.wmv` 多数内核放不了，Web 模式请优先 `.mp4/.webm`；桌面版可用「用系统播放器打开」兜底 |
 | 移动端 | 手机浏览器访问同一地址 | 390px 宽度下顶栏分两行、播放条自动换行；`-lan` 或反向代理暴露后用 `MPLAY_TOKEN` 保护 |
 
@@ -178,6 +183,7 @@ CI 里 `urlbox` 是现场 `cargo build` 的（Linux 会装 webkit2gtk 依赖）�
 | GET | `/api/search?q=&limit=` | 在线搜歌 |
 | GET | `/api/search/lyrics?q=` | 歌词片段反查（local / remote / library） |
 | GET | `/api/sources` | 当前音源及启用状态 |
+| POST | `/api/pick/folder` | 弹系统目录选择框，返回 `{ok,path}`（或 `{ok:false,cancelled:true}`）；只对本机访问开放 |
 | POST | `/api/open` | `{"id":..,"action":"reveal"|"player"}`（仅桌面） |
 | GET | `/media/{id}`、`/cover/{id}` | 媒体流（Range）、封面 |
 

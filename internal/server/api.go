@@ -64,6 +64,7 @@ func (s *Server) publicConfig() map[string]any {
 		"sources":             cfg.Sources,
 		"authRequired":        cfg.AuthToken != "",
 		"desktop":             s.o.Desktop,
+		"canPickFolder":       desktop.CanPickFolder(),
 		"platform":            config.Platform(),
 		"configPath":          cfg.Path(),
 		"version":             s.o.Version,
@@ -520,6 +521,32 @@ func shortHash(s string) string {
 
 func (s *Server) handleSources(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"sources": s.o.Search.Sources()})
+}
+
+// handlePickFolder 弹出系统「选择文件夹」对话框，返回绝对路径。
+// 只对本机（回环）访问开放：这个动作会在服务器所在的那台机器上弹窗。
+func (s *Server) handlePickFolder(w http.ResponseWriter, r *http.Request) {
+	if !desktop.IsLoopback(s.o.Cfg.Addr) {
+		writeJSON(w, http.StatusForbidden, map[string]any{"error": "只有本机访问才能打开本地文件夹"})
+		return
+	}
+	if !desktop.CanPickFolder() {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"ok":    false,
+			"error": "这台机器没有图形界面/目录选择工具（zenity / kdialog / osascript）",
+		})
+		return
+	}
+	path, err := desktop.PickFolder(r.Context(), "选择要加入曲库的文件夹")
+	if err != nil {
+		if errors.Is(err, desktop.ErrPickCanceled) {
+			writeJSON(w, http.StatusOK, map[string]any{"ok": false, "cancelled": true})
+			return
+		}
+		errJSON(w, http.StatusInternalServerError, err, "")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "path": path})
 }
 
 func (s *Server) handleOpen(w http.ResponseWriter, r *http.Request) {

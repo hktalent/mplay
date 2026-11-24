@@ -39,9 +39,9 @@
         <p class="sub" id="lib-stats">正在读取曲库…</p>
       </div>
       <div class="head-actions">
-        <button class="btn ghost" id="btn-open-files" type="button">
-          <svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h6l2 2h8v10H4z"/></svg>
-          打开本地文件
+        <button class="btn ghost" id="btn-open-files" type="button" title="选择一个本地文件夹加入曲库并扫描；单个文件也可以直接拖进窗口">
+          <svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h5l2 2h9v9H4z"/><path d="M4 7v-2h4l2 2"/></svg>
+          打开本地文件夹
         </button>
         <button class="btn ghost" id="btn-rescan" type="button">
           <svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 12a8 8 0 1 1-2.4-5.7"/><path d="M20 4v5h-5"/></svg>
@@ -82,10 +82,12 @@
       <p id="lib-empty-desc">在设置里添加媒体目录，或者直接把文件拖进来。</p>
       <div class="empty-actions">
         <a class="btn" href="#/settings">去添加目录</a>
-        <button class="btn ghost" id="btn-open-files-2" type="button">打开本地文件</button>
+        <button class="btn ghost" id="btn-open-files-2" type="button">打开本地文件夹</button>
       </div>
     </div>
     <input id="file-input" type="file" accept="audio/*,video/*,.mp3,.flac,.m4a,.aac,.ogg,.opus,.wav,.ape,.mkv,.mp4,.webm,.mov,.avi,.lrc,.srt,.vtt,.ass,.txt" multiple hidden>
+    <!-- 没有系统目录选择框时（纯网页/远程部署）的退路：浏览器目录选择，只做临时播放 -->
+    <input id="folder-input" type="file" webkitdirectory directory multiple hidden>
   </section>
 
   <!-- 搜索 -->
@@ -226,7 +228,7 @@
           <input type="text" id="dir-input" placeholder="/Users/you/Music 或 D:\Music" spellcheck="false">
           <button class="btn" type="submit">添加目录</button>
         </form>
-        <p class="tiny">添加后会立即在后台扫描。也可以直接用「打开本地文件」，不写进曲库。</p>
+        <p class="tiny">添加后会立即在后台扫描。也可以点「打开本地文件夹」直接选一个目录（会自动加到这里并扫描）。</p>
       </section>
 
       <section class="card">
