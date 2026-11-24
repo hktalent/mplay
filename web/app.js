@@ -1071,6 +1071,8 @@
       el.checked = !!val;
     };
     set('sw-lrclib', c.enableLRCLIB);
+    set('sw-kugou', c.enableKugou);
+    set('sw-netease-source', c.enableNeteaseSource);
     set('sw-netease', c.enableNeteaseLyric);
     set('sw-sidecar', c.writeSidecar);
     set('sw-itunes', c.enableITunes);
@@ -1495,6 +1497,8 @@
       });
     };
     toggle('sw-lrclib', 'enableLRCLIB');
+    toggle('sw-kugou', 'enableKugou');
+    toggle('sw-netease-source', 'enableNeteaseSource');
     toggle('sw-netease', 'enableNeteaseLyricSearch');
     toggle('sw-sidecar', 'writeSidecar');
     toggle('sw-itunes', 'enableITunes');
