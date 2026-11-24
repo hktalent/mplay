@@ -41,6 +41,10 @@ type Doc struct {
 	Duration float64           `json:"duration,omitempty"`
 	Offset   float64           `json:"offset,omitempty"`
 	LRCLIBID int64             `json:"lrclibId,omitempty"`
+	// Instrumental 为真表示「歌词库确认这首歌没有词（纯音乐）」，
+	// 此时 Cues 为空，Note 里是给用户看的说法。
+	Instrumental bool   `json:"instrumental,omitempty"`
+	Note         string `json:"note,omitempty"`
 }
 
 var (

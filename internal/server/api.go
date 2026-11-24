@@ -47,6 +47,8 @@ func (s *Server) publicConfig() map[string]any {
 		"enableITunes":        cfg.EnableITunes,
 		"enableArchive":       cfg.EnableArchive,
 		"enableLRCLIB":        cfg.EnableLRCLIB,
+		"enableKugou":         cfg.EnableKugou,
+		"enableNeteaseSource": cfg.EnableNeteaseSource,
 		"enableNeteaseLyric":  cfg.EnableNeteaseLyric,
 		"allowLan":            cfg.AllowLAN,
 		"lrclibBase":          cfg.LRCLIBBase,
@@ -78,6 +80,8 @@ type configPatch struct {
 	EnableITunes        *bool            `json:"enableITunes"`
 	EnableArchive       *bool            `json:"enableArchive"`
 	EnableLRCLIB        *bool            `json:"enableLRCLIB"`
+	EnableKugou         *bool            `json:"enableKugou"`
+	EnableNeteaseSource *bool            `json:"enableNeteaseSource"`
 	EnableNeteaseLyric  *bool            `json:"enableNeteaseLyricSearch"`
 	JamendoClientID     *string          `json:"jamendoClientId"`
 	OpenSubtitlesAPIKey *string          `json:"opensubtitlesApiKey"`
@@ -125,6 +129,14 @@ func (s *Server) handlePostConfig(w http.ResponseWriter, r *http.Request) {
 	if p.EnableLRCLIB != nil {
 		cfg.EnableLRCLIB = *p.EnableLRCLIB
 		s.o.Lyr.Enabled = *p.EnableLRCLIB
+	}
+	if p.EnableKugou != nil {
+		cfg.EnableKugou = *p.EnableKugou
+		s.o.Lyr.Kugou = *p.EnableKugou
+	}
+	if p.EnableNeteaseSource != nil {
+		cfg.EnableNeteaseSource = *p.EnableNeteaseSource
+		s.o.Lyr.Netease = *p.EnableNeteaseSource
 	}
 	if p.EnableNeteaseLyric != nil {
 		cfg.EnableNeteaseLyric = *p.EnableNeteaseLyric

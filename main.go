@@ -98,6 +98,8 @@ func main() {
 
 	lib := media.NewLibrary(cacheDir, func() []string { return cfg.MediaDirs })
 	lyr := lyrics.NewClient(cfg.LRCLIBBase, cacheDir, cfg.EnableLRCLIB)
+	lyr.Kugou = cfg.EnableKugou
+	lyr.Netease = cfg.EnableNeteaseSource
 	subs := lyrics.NewSubtitleClient(cfg.OSAPIKey, cfg.OSUsername, cfg.OSPassword, cacheDir)
 	searcher := music.New(cfg)
 
@@ -111,6 +113,12 @@ func main() {
 		Version: version,
 		Desktop: *desktopMode || config.IsDesktop(),
 	}
+	// 老版本把酷狗返回的「纯音乐，请欣赏」当成歌词存了下来，启动时先清一遍，
+	// 免得界面里挂着假歌词、统计也虚高。
+	if n := lyr.MigrateNoLyricCache(); n > 0 {
+		log.Printf("[mplay] 修正了 %d 条纯音乐占位歌词缓存", n)
+	}
+
 	srv := server.New(opts)
 
 	// 先 Listen 再起服务：桌面模式端口被占用时要顺延，同时才能拿到真实端口。
