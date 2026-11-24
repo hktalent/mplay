@@ -50,7 +50,7 @@
   };
 
   const player = new window.MPPlay.Player($('video'));
-  player.setupViz($('viz'));
+  player.setupViz($('viz'), $('mini-viz'));
   const LV = new L.LyricView($('lyrics'), { onSeek: function (t) { player.seekTo(t); } });
 
   /* ── 工具 ─────────────────────────────────────────── */
@@ -430,7 +430,8 @@
   }
 
   /* ── 播放 ─────────────────────────────────────────── */
-  function playItem(item, queue, index, seekTo) {
+  // opts.keepView：从最小化条切歌时不要跳回播放页（在曲库/搜索页继续待着）
+  function playItem(item, queue, index, seekTo, opts) {
     S.queue = queue || [item];
     S.qi = typeof index === 'number' ? index : 0;
     S.current = item;
@@ -468,8 +469,10 @@
     loadLyricFor(item, false, 0);
     renderBadges(item, null, '');
     renderMini();
-    if (S.view !== 'player') go('player');
-    else show('player');
+    if (!(opts && opts.keepView)) {
+      if (S.view !== 'player') go('player');
+      else show('player');
+    }
     window.scrollTo(0, 0);
     if (typeof seekTo === 'number' && seekTo > 0) {
       setTimeout(function () { player.seekTo(seekTo); }, 300);
@@ -606,11 +609,12 @@
   /* 音量 UI：滑杆常驻在进度条同一行，静音按钮与百分比数字跟着状态走 */
   function syncVolumeUI() {
     const p = Math.round((player._volume || 0) * 100);
-    const volEl = $('volume');
-    if (volEl) {
-      volEl.value = String(p);
-      volEl.style.setProperty('--p', p + '%');
-    }
+    ['volume', 'mini-volume'].forEach(function (id) {
+      const el = $(id);
+      if (!el) return;
+      el.value = String(p);
+      el.style.setProperty('--p', p + '%');
+    });
     const num = $('vol-num');
     if (num) num.textContent = player._muted ? '静音' : p + '%';
     const ico = $('ico-vol');
@@ -725,12 +729,12 @@
     }
   }
 
-  function next(delta) {
+  function next(delta, keepView) {
     if (!S.queue.length) return;
     let i = S.qi + (delta || 1);
     if (i >= S.queue.length) i = 0;
     if (i < 0) i = S.queue.length - 1;
-    playItem(S.queue[i], S.queue, i);
+    playItem(S.queue[i], S.queue, i, undefined, { keepView: !!keepView });
   }
 
   /* ── 在线搜索 ─────────────────────────────────────── */
@@ -1558,9 +1562,26 @@
     // 播放器
     $('btn-play').addEventListener('click', function () { player.toggle(); });
     $('mini-play').addEventListener('click', function (ev) { ev.stopPropagation(); player.toggle(); });
+    const miniPrev = $('mini-prev');
+    if (miniPrev) miniPrev.addEventListener('click', function (ev) { ev.stopPropagation(); next(-1, true); });
+    const miniVol = $('mini-volume');
+    if (miniVol) {
+      miniVol.addEventListener('input', function () {
+        const v = Number(this.value) / 100;
+        player.setVolume(v);
+        LS.set('volume', v);
+        syncVolumeUI();
+      });
+      miniVol.addEventListener('dblclick', function () {
+        player.setVolume(0.8);
+        LS.set('volume', 0.8);
+        syncVolumeUI();
+      });
+    }
     $('btn-prev').addEventListener('click', function () { next(-1); });
     $('btn-next').addEventListener('click', function () { next(1); });
-    $('mini-next').addEventListener('click', function (ev) { ev.stopPropagation(); next(1); });
+    $('mini-next').addEventListener('click', function (ev) { ev.stopPropagation(); next(1, true); });
+    // 迷你条上的播放/暂停图标由 setPlayIcon 统一处理
     $('btn-back10').addEventListener('click', function () { player.nudge(-10); });
     $('btn-fwd10').addEventListener('click', function () { player.nudge(10); });
     $('btn-full').addEventListener('click', function () {
@@ -1916,7 +1937,7 @@
       if (playing && S.blockedShown) { S.blockedShown = false; }
       $('stage-msg').hidden = true;
     });
-    player.on('ended', function () { next(1); });
+    player.on('ended', function () { next(1, true); });
     player.on('error', function (msg) {
       const box = $('stage-msg');
       box.innerHTML = '<span>' + esc(msg || '播放失败') + '</span>';

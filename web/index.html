@@ -382,12 +382,20 @@
     <div class="mini-title" id="mini-title"></div>
     <div class="mini-artist" id="mini-artist"></div>
   </div>
+  <div class="mini-viz" id="mini-viz" aria-hidden="true"></div>
   <div class="mini-progress"><i id="mini-bar"></i></div>
   <div class="mini-time" id="mini-time">0:00</div>
-  <button class="ico" id="mini-play" type="button" aria-label="播放/暂停">
+  <div class="mini-vol">
+    <svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9h4l5-4v14l-5-4H4z"/><path d="M17 8a6 6 0 0 1 0 8"/></svg>
+    <input type="range" id="mini-volume" min="0" max="100" value="80" aria-label="音量" title="音量">
+  </div>
+  <button class="ico" id="mini-prev" type="button" aria-label="上一首" title="上一首">
+    <svg viewBox="0 0 24 24"><path d="M7 5v14M20 6v12L9 12z"/></svg>
+  </button>
+  <button class="ico" id="mini-play" type="button" aria-label="播放/暂停" title="播放/暂停">
     <svg viewBox="0 0 24 24" id="mini-ico"><path d="M8 5l11 7-11 7z"/></svg>
   </button>
-  <button class="ico" id="mini-next" type="button" aria-label="下一首">
+  <button class="ico" id="mini-next" type="button" aria-label="下一首" title="下一首">
     <svg viewBox="0 0 24 24"><path d="M17 5v14M4 6v12l11-6z"/></svg>
   </button>
 </div>
