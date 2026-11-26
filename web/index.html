@@ -80,6 +80,12 @@
         <button class="chip" data-filter="nolyric" type="button">全部缺词</button>
       </div>
       <div class="toolbar-right">
+        <div class="lib-search">
+          <svg class="i" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5"/></svg>
+          <input id="lib-q" type="search" autocomplete="off" spellcheck="false"
+                 placeholder="在当前列表里模糊搜索" aria-label="在当前列表里搜索"
+                 title="输入即在本已加载的列表里模糊筛选；回车则在整库范围内搜">
+        </div>
         <span class="cache-tag" id="cache-chip" hidden></span>
         <label class="sr-only" for="lib-sort">排序</label>
         <select id="lib-sort" class="select">

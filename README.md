@@ -29,6 +29,7 @@ A local-first audio/video player: scan your media folders → match lyrics and s
 - Local audio and video: MP3/FLAC/M4A/AAC/OGG/OPUS/WAV/APE… and MP4/MKV/WEBM/MOV/AVI…
 - HTTP Range streaming (scrubbing video, play-while-loading), cover art read from tags and cached
 - Play queue, previous/next, ±10s, speed, volume, fullscreen, mini player bar
+- **Fuzzy search in the current list and the play queue**: the library toolbar box filters the loaded list as you type (no server round-trip), accepts several words in any order, and tolerates gaps — `周稻` finds 周杰伦 · 稻香. Enter widens the same query to the whole library; the play queue (More actions → Play queue) has the same search, and clicking a row jumps straight to that track
 - Volume lives on the same row as the progress bar (mute button + percentage), adjustable at any width; `M` to mute, `↑/↓` in 5% steps
 - **Current lyric line always visible** just above the progress bar: the line being sung (plus translation), with dedicated text for intro/interlude and for instrumental tracks; on the library page the mini bar uses that line instead of the artist name
 - **The minimized (mini) bar is a full player**: after you switch to library/search, the bar floating at the bottom has a volume slider, previous, play/pause, next, plus a 12-bar mini spectrum; clicking the cover or title returns to the player page. Skipping tracks from the mini bar does not yank you back to the player page.
@@ -69,6 +70,19 @@ The UI ships **English by default**, with Simplified Chinese available as an alt
 - **Config field**: `language` = `en` (default) or `zh-CN`; `POST /api/config {"language":"zh-CN"}` flips it server-side.
 - **How it works**: `web/i18n.js` holds a 338-entry phrase table keyed by the Chinese source text; `T()` replaces the longest matching phrase when the language is English, `MPI.localizeDOM()` translates the static markup in `index.html` once at boot. Content (titles, artists, lyrics, file paths) is never translated — only interface copy.
 - **Server messages**: API errors are Chinese on the wire and pass through the same phrase table, so toasts and empty states come out English too.
+
+## Fuzzy search (v1.6)
+
+Two places where you search **inside a list you already have**, instead of going to the online search page:
+
+- **Library toolbar box**: filters the currently loaded list on every keystroke — purely client-side, so there is no request per letter; the counter reads `Showing 12 / 584`. Press Enter and the same query runs against the whole library on the server (that is when the `Whole library: …` chip appears, click it to clear). Esc or the native ✕ clears it.
+- **Play queue**: More actions → Play queue lists everything in the current queue with its real position, duration and a highlight on what is playing; the box on top searches it the same way, and clicking a row jumps to that track without disturbing the queue order.
+
+Matching rules (identical in Go and JS, so the local filter and the server search agree):
+
+1. The query is split on spaces and **every word must hit** — order and field boundaries do not matter (`稻香 周杰伦` = `周杰伦 稻香`).
+2. A word hits as prefix > substring > "loose": its characters appear in order with at most 6 characters in between (`周稻` → `周杰伦 - 稻香`).
+3. Hits are ranked by that score; ties keep the sort order you picked in the dropdown.
 
 ## Quick start
 

@@ -52,6 +52,7 @@
     filter: 'all',
     sort: LS.get('sort', 'title'),
     q: '',
+    localQ: '',
     queue: [],
     qi: -1,
     current: null,
@@ -108,6 +109,71 @@
     if (by && !artist) { artist = by[1]; title = clean.replace(by[0], '').trim(); }
     return { title: title || base, artist: artist };
   }
+  /* ── 模糊匹配 ───────────────────────────────────────
+     与 Go 端 media.FuzzyScore 同一套规则，前端用它做「当前列表内即时筛选」和
+     「播放清单搜索」，输入即出结果，不逐字打服务器。
+     规则：空格切词、每词都要命中（顺序随意、可跨字段）；
+     前缀命中 > 连续包含 > 跳跃命中（字符按序出现，间隔 ≤ FUZZY_GAP）。 */
+  const FUZZY_GAP = 6;
+  function fuzzyLoose(tok, hay) {
+    const t = Array.from(tok), h = Array.from(hay);
+    if (!t.length || t.length > h.length) return false;
+    for (let start = 0; start < h.length; start++) {
+      if (h[start] !== t[0]) continue;
+      let i = 1, last = start, ok = true;
+      while (i < t.length) {
+        let pos = last + 1, found = false;
+        for (; pos < h.length && pos <= last + FUZZY_GAP + 1; pos++) {
+          if (h[pos] === t[i]) { last = pos; i++; found = true; break; }
+        }
+        if (!found) { ok = false; break; }
+      }
+      if (ok) return true;
+    }
+    return false;
+  }
+  function fuzzyTokenScore(tok, hay) {
+    if (!tok) return 1;
+    if (hay.indexOf(tok) === 0) return 5;
+    if (hay.indexOf(tok) >= 0) return 4;
+    return fuzzyLoose(tok, hay) ? 3 : 0;
+  }
+  // 返回得分，0 表示不匹配（空查询得 1，调用方可以直接用 score === 0 过滤）
+  function fuzzyScore(q, fields) {
+    const toks = String(q || '').toLowerCase().trim().split(/\s+/).filter(Boolean);
+    if (!toks.length) return 1;
+    const hay = (fields || []).filter(function (v) { return v != null && v !== ''; })
+      .map(function (v) { return String(v).toLowerCase(); });
+    if (!hay.length) return 0;
+    const joined = hay.join(' ');
+    let total = 0;
+    for (const tok of toks) {
+      let best = 0;
+      for (const h of hay) {
+        const sc = fuzzyTokenScore(tok, h);
+        if (sc > best) best = sc;
+      }
+      if (!best) {
+        if (joined.indexOf(tok) >= 0) best = 4;
+        else if (fuzzyLoose(tok, joined)) best = 3;
+      }
+      if (!best) return 0;
+      total += best;
+    }
+    return total;
+  }
+  // 按相关度筛一批对象；q 为空时原样返回，保持服务端排序不动。
+  function fuzzyFilter(q, list, fieldsOf) {
+    if (!String(q || '').trim()) return list;
+    const rows = [];
+    for (const it of list) {
+      const sc = fuzzyScore(q, fieldsOf(it));
+      if (sc > 0) rows.push({ it: it, s: sc });
+    }
+    rows.sort(function (a, b) { return b.s - a.s; });
+    return rows.map(function (r) { return r.it; });
+  }
+
   function authQS() { return S.token ? ('token=' + encodeURIComponent(S.token)) : ''; }
   function withToken(url) {
     if (!S.token) return url;
@@ -295,6 +361,21 @@
   }
   setInterval(function () { refreshCacheChip(false); }, 3000);
 
+  // 曲库条目参与模糊匹配的字段：歌名、歌手、专辑、文件名、路径。
+  function libFields(e) {
+    return [e.title || e.name, e.artist, e.album, e.name, e.path];
+  }
+
+  // 清掉搜索：本地筛词与服务端 q 一起复位，回到完整曲库。
+  function resetLibSearch() {
+    S.localQ = '';
+    S.q = '';
+    const box = $('lib-q');
+    if (box) box.value = '';
+    $('q').value = '';
+    loadLibrary().catch(function (e) { toast(e.message, true); });
+  }
+
   async function loadLibrary() {
     const params = new URLSearchParams();
     if (S.q) params.set('q', S.q);
@@ -335,18 +416,27 @@
         T(' · 纯音乐 ') + (st.noLyric || 0) + ' · ' + fmtSize(st.bytes || 0));
     syncFilters();
 
+    // 本地模糊筛选：只在已加载的这批条目上过滤，输入即出结果，不发请求。
+    const all = S.lib.items;
+    const items = fuzzyFilter(S.localQ, all, libFields);
+    const localQ = String(S.localQ || '').trim();
+
     $('lib-chips').innerHTML =
-      T('<span>显示 ') + S.lib.items.length + ' / ' + S.lib.total + '</span>' +
+      T('<span>显示 ') + items.length + ' / ' + (localQ ? all.length : S.lib.total) + '</span>' +
+      (localQ ? T('<span>当前列表内模糊筛选</span>') : '') +
+      (S.q ? '<button class="chip is-on" id="lib-q-clear" type="button">' + T('全库搜索：') + esc(S.q) + ' ✕</button>' : '') +
       (S.lib.roots && S.lib.roots.length ? '<span>' + esc(S.lib.roots.join(' · ')) + '</span>' : T('<span>未配置媒体目录</span>'));
+    const clearQ = $('lib-q-clear');
+    if (clearQ) clearQ.addEventListener('click', function () { resetLibSearch(); });
 
     const list = $('lib-list');
     list.innerHTML = '';
-    const items = S.lib.items;
     if (!items.length) {
       $('lib-empty').hidden = false;
-      $('lib-empty-title').textContent = S.q ? T('没找到匹配的曲目') : T('曲库还是空的');
-      $('lib-empty-desc').textContent = S.q
-        ? T('换个关键词，或者到「搜索」里找在线音源。')
+      const querying = !!(S.q || localQ);
+      $('lib-empty-title').textContent = querying ? T('没找到匹配的曲目') : T('曲库还是空的');
+      $('lib-empty-desc').textContent = querying
+        ? (S.q ? T('换个关键词，或者到「搜索」里找在线音源。') : T('这个列表里没有匹配的歌，清掉关键词再看全部。'))
         : T('在设置里添加媒体目录后会自动扫描；也可以点「打开本地文件夹」直接选一个目录。');
       return;
     }
@@ -1446,10 +1536,71 @@
     });
   }
 
+  /* ── 播放清单 ───────────────────────────────────────
+     清单就是当前播放队列。里面的搜索是纯前端模糊过滤：只筛展示的那几行，
+     序号仍是队列里的真实位置，点哪行就跳到哪首，不影响下一页/上一页的顺序。 */
+  function openQueue() {
+    if (!S.queue.length) { toast(T('还没有播放清单')); return; }
+    openModal(T('播放清单'),
+      '<div class="queue-bar"><input id="queue-q" type="search" class="queue-q" placeholder="' +
+      esc(T('在清单里模糊搜索')) + '" aria-label="' + esc(T('在清单里搜索')) + '"></div>' +
+      '<div class="queue-count tiny" id="queue-count"></div>' +
+      '<div class="queue-list" id="queue-list"></div>');
+    const box = $('queue-q');
+    const paint = function () {
+      const q = box ? box.value : '';
+      const rows = fuzzyFilter(q, S.queue.map(function (it, i) { return { it: it, i: i }; }), function (r) {
+        return [r.it.title, r.it.artist, r.it.album];
+      });
+      const list = $('queue-list');
+      if (!list) return;
+      const cnt = $('queue-count');
+      if (cnt) cnt.textContent = T('共 ') + S.queue.length + T(' 首') + (String(q || '').trim() ? ' · ' + T('显示 ') + rows.length : '');
+      if (!rows.length) {
+        list.innerHTML = T('<p class="tiny queue-empty">清单里没有匹配的歌</p>');
+        return;
+      }
+      list.innerHTML = rows.map(function (r) {
+        const it = r.it;
+        const on = r.i === S.qi ? ' is-on' : '';
+        return '<button class="cand queue-row' + on + '" type="button" data-qi="' + r.i + '">' +
+          '<span class="qi">' + (r.i + 1) + '</span>' +
+          '<span class="qmeta"><span class="t">' + esc(it.title || '') + '</span>' +
+          '<span class="m">' + esc(it.artist || T('未知歌手')) + '</span></span>' +
+          '<span class="qdur">' + (it.duration ? fmtTime(it.duration) : '') + '</span>' +
+          '</button>';
+      }).join('');
+      $$('#queue-list .queue-row').forEach(function (b) {
+        b.addEventListener('click', function () {
+          const qi = Number(b.dataset.qi);
+          closeModal();
+          // 在曲库/搜索页点清单不该被踢回播放页
+          playItem(S.queue[qi], S.queue, qi, undefined, { keepView: S.view !== 'player' });
+        });
+      });
+    };
+    if (box) {
+      let timer = 0;
+      box.addEventListener('input', function () {
+        clearTimeout(timer);
+        timer = setTimeout(paint, 100);
+      });
+      box.addEventListener('keydown', function (ev) {
+        if (ev.key !== 'Enter') return;
+        ev.preventDefault();
+        clearTimeout(timer);
+        const first = document.querySelector('#queue-list .queue-row');
+        if (first) first.click();  // 回车直接播第一条匹配
+      });
+    }
+    paint();
+  }
+
   function openCurrentMenu() {
     const item = S.current;
     if (!item) { toast(T('先播放一首')); return; }
     const rows = [
+      [T('播放清单'), function () { openQueue(); }],
       [T('复制播放地址'), function () {
         navigator.clipboard.writeText(item.url).then(function () { toast(T('已复制')); }, function () { toast(item.url); });
       }],
@@ -1526,6 +1677,43 @@
       LS.set('sort', S.sort);
       loadLibrary().catch(function (e) { toast(e.message, true); });
     });
+
+    // 曲库搜索框：输入即在本已加载的列表上模糊筛（不发请求）；回车才去搜整个曲库。
+    const libQ = $('lib-q');
+    if (libQ) {
+      let timer = 0;
+      const localFilter = function () {
+        S.localQ = libQ.value;
+        renderLibrary();
+      };
+      libQ.addEventListener('input', function () {
+        clearTimeout(timer);
+        // 100ms 防抖：连续输入时别每一帧都重排整张列表
+        timer = setTimeout(localFilter, 100);
+      });
+      libQ.addEventListener('search', function () {
+        if (!libQ.value) { clearTimeout(timer); localFilter(); }
+      });
+      libQ.addEventListener('keydown', function (ev) {
+        if (ev.key === 'Escape') {
+          // Esc 清词：浏览器给 type=search 的 ✕ 有的内核不画，键盘也能一键还原
+          ev.preventDefault();
+          resetLibSearch();
+          return;
+        }
+        if (ev.key !== 'Enter') return;
+        ev.preventDefault();
+        clearTimeout(timer);
+        const q = libQ.value.trim();
+        if (!q) { resetLibSearch(); return; }
+        // 回车：同样的模糊规则，但范围是整个曲库（不受已加载条数限制）
+        S.localQ = '';
+        S.q = q;
+        loadLibrary().then(function () {
+          toast(S.lib.total ? (T('全库命中：') + S.lib.total) : T('曲库里没有「') + q + T('」'));
+        }).catch(function (e) { toast(e.message, true); });
+      });
+    }
 
     $('btn-rescan').addEventListener('click', function () {
       api('/api/library/scan', { method: 'POST' }).then(function () {

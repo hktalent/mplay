@@ -260,7 +260,12 @@ func (s *Server) handleLibrary(w http.ResponseWriter, r *http.Request) {
 	}
 
 	items := s.o.Lib.List()
-	out := make([]media.Entry, 0, len(items))
+	// 查询命中的相关度：q 非空时按分数排，空查询每项都是 1，排序退回到 sortBy。
+	type hit struct {
+		e media.Entry
+		s int
+	}
+	hits := make([]hit, 0, len(items))
 	for _, e := range items {
 		if kind != "" && kind != "all" && e.Kind != kind {
 			continue
@@ -284,21 +289,37 @@ func (s *Server) handleLibrary(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 		}
-		if q != "" && !strings.Contains(strings.ToLower(e.Title+" "+e.Artist+" "+e.Album+" "+e.Name+" "+e.Path), q) {
+		// 模糊匹配：空格切词、顺序随意、允许「周稻」这种跳跃命中（见 media.FuzzyScore）。
+		score := media.FuzzyScore(q, e.Title, e.Artist, e.Album, e.Name, e.Path)
+		if score == 0 {
 			continue
 		}
-		out = append(out, redactEntry(e, local))
+		hits = append(hits, hit{e: redactEntry(e, local), s: score})
 	}
 
+	less := func(i, j int) bool { return false }
 	switch sortBy {
 	case "artist":
-		sort.SliceStable(out, func(i, j int) bool { return strings.ToLower(out[i].Artist) < strings.ToLower(out[j].Artist) })
+		less = func(i, j int) bool { return strings.ToLower(hits[i].e.Artist) < strings.ToLower(hits[j].e.Artist) }
 	case "newest":
-		sort.SliceStable(out, func(i, j int) bool { return out[i].ModTime > out[j].ModTime })
+		less = func(i, j int) bool { return hits[i].e.ModTime > hits[j].e.ModTime }
 	case "size":
-		sort.SliceStable(out, func(i, j int) bool { return out[i].Size > out[j].Size })
+		less = func(i, j int) bool { return hits[i].e.Size > hits[j].e.Size }
 	case "duration":
-		sort.SliceStable(out, func(i, j int) bool { return out[i].Duration > out[j].Duration })
+		less = func(i, j int) bool { return hits[i].e.Duration > hits[j].e.Duration }
+	}
+	q = strings.TrimSpace(q)
+	hasQuery := q != ""
+	sort.SliceStable(hits, func(i, j int) bool {
+		// 有查询时先按相关度：前缀命中 > 连续包含 > 跳跃命中，同分再用用户选的排序。
+		if hasQuery && hits[i].s != hits[j].s {
+			return hits[i].s > hits[j].s
+		}
+		return less(i, j)
+	})
+	out := make([]media.Entry, 0, len(hits))
+	for _, h := range hits {
+		out = append(out, h.e)
 	}
 	total := len(out)
 	if limit > 0 && len(out) > limit {
